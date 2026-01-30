@@ -1,4 +1,4 @@
--- Active: 1758452166660@@127.0.0.1@3306@prs_database
+-- Active: 1769700717965@@127.0.0.1@3306
 
 DROP DATABASE prs_database;
 CREATE DATABASE prs_database;

@@ -69,6 +69,53 @@ app.post("/api/login", (req, res) => {
   });
 });
 
+// GET all departments
+app.get("/api/departments", (req, res) => {
+  const sql = "SELECT id, code FROM depts"; // Fetches ID and the code (which UI uses as name)
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Error fetching departments:", err);
+      return res.status(500).json({ message: "Database error" });
+    }
+    res.json(results);
+  });
+});
+
+// POST to add or update a department
+app.post("/api/departments", (req, res) => {
+  const { id, name } = req.body; // 'name' from frontend maps to 'code' in DB
+
+  if (id) {
+    // UPDATE existing department
+    const sql = "UPDATE depts SET code = ? WHERE id = ?";
+    db.query(sql, [name, id], (err, result) => {
+      if (err) return res.status(500).json({ message: "Update failed" });
+      res.json({ message: "Department updated successfully" });
+    });
+  } else {
+    // INSERT new department
+    const sql = "INSERT INTO depts (code) VALUES (?)";
+    db.query(sql, [name], (err, result) => {
+      if (err) return res.status(500).json({ message: "Insert failed" });
+      res.json({ message: "Department added successfully", id: result.insertId });
+    });
+  }
+});
+
+// DELETE a department by ID
+app.delete("/api/departments/:id", (req, res) => {
+  const { id } = req.params;
+  const sql = "DELETE FROM depts WHERE id = ?";
+  
+  db.query(sql, [id], (err, result) => {
+    if (err) {
+      console.error("Delete error:", err);
+      return res.status(500).json({ message: "Database error" });
+    }
+    res.json({ message: "Deleted successfully" });
+  });
+});
+
 //fetch deartment subs
 app.get("/api/subjects", authenticate, (req, res) => {
   const { role, dept} = req.user;
