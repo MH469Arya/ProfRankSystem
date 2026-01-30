@@ -7,27 +7,53 @@ export default function DepartmentManager() {
     const [editingId, setEditingId] = useState(null);
     const [formData, setFormData] = useState({ name: '', hodEmail: '' });
 
-    // Mock Data Fetch
-    useEffect(() => {
-        setDepartments([
-            { id: 1, name: 'Computer Engineering', hodEmail: 'compwd@college.edu' },
-            { id: 2, name: 'AIML', hodEmail: 'aimlhod@college.edu' },
-            { id: 3, name: 'IT', hodEmail: 'ithod@college.edu' }
-        ]);
-    }, []);
-
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        if (editingId) {
-            setDepartments(departments.map(d =>
-                d.id === editingId ? { ...d, ...formData } : d
-            ));
-        } else {
-            const newId = departments.length > 0 ? Math.max(...departments.map(d => d.id)) + 1 : 1;
-            setDepartments([...departments, { id: newId, ...formData }]);
+   useEffect(() => {
+    const initData = async () => {
+        try {
+            const response = await fetch('http://localhost:5000/api/departments');
+            const dbData = await response.json();
+            
+            const mappedData = dbData.map(dept => ({
+                id: dept.id,
+                name: dept.code 
+            }));
+            setDepartments(mappedData);
+        } catch (error) {
+            setDepartments([
+                { id: 1, name: 'Computer Engineering' },
+                { id: 2, name: 'AIML' },
+                { id: 3, name: 'IT' }
+            ]);
         }
-        closeModal();
     };
+    initData();
+}, []);
+
+ const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    const payload = { 
+        id: editingId, 
+        name: formData.name 
+    };
+
+    try {
+        const response = await fetch('http://localhost:5000/api/departments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+            const res = await fetch('http://localhost:5000/api/departments');
+            const data = await res.json();
+            setDepartments(data.map(d => ({ id: d.id, name: d.code })));
+            closeModal();
+        }
+    } catch (error) {
+        console.error("Connection to backend failed");
+    }
+};
 
     const openModal = (dept = null) => {
         if (dept) {
@@ -45,11 +71,23 @@ export default function DepartmentManager() {
         setFormData({ name: '', hodEmail: '' });
     };
 
-    const handleDelete = (id) => {
-        if (confirm('Are you sure you want to delete this department?')) {
-            setDepartments(departments.filter(d => d.id !== id));
+   const handleDelete = async (id) => {
+    if (window.confirm('Are you sure you want to delete this department?')) {
+        try {
+            const response = await fetch(`http://localhost:5000/api/departments/${id}`, {
+                method: 'DELETE',
+            });
+
+            if (response.ok) {
+                setDepartments(departments.filter(d => d.id !== id));
+            } else {
+                alert("Failed to delete from database");
+            }
+        } catch (error) {
+            console.error("Delete request failed:", error);
         }
-    };
+    }
+};
 
     return (
         <div>
