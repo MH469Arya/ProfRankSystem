@@ -4,6 +4,7 @@ import Login from './pages/Login';
 import PrincipalDashboard from './pages/PrincipalDashboard';
 import HODDashboard from './pages/HODDashboard';
 import PrivateRoute from './components/PrivateRoute';
+import Voting from './components/Voting';
 
 function App() {
   return (
@@ -29,6 +30,8 @@ function App() {
               </PrivateRoute>
             }
           />
+
+          <Route path="/v" element={<Voting />} />
 
           <Route path="/" element={<Navigate to="/login" replace />} />
           {/* Catch all redirect to login */}

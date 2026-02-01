@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { QRCodeCanvas } from 'qrcode.react';
+import { QRCodeSVG } from 'qrcode.react';
 import { Button } from './ui/SharedComponents';
 
 export default function QRGenerator() {
@@ -7,7 +7,10 @@ export default function QRGenerator() {
     const [classroom, setClassroom] = useState('');
     const [showQR, setShowQR] = useState(false);
     const [timeLeft, setTimeLeft] = useState(0);
+    const [qrUrl, setQrUrl] = useState('');
+    const [isGenerating, setIsGenerating] = useState(false);
 
+    // Timer countdown
     useEffect(() => {
         let interval;
         if (showQR && timeLeft > 0) {
@@ -21,10 +24,27 @@ export default function QRGenerator() {
     }, [showQR, timeLeft]);
 
     const handleGenerate = () => {
-        if (dept && classroom) {
+        if (!dept || !classroom) return;
+
+        setIsGenerating(true);
+
+        // Short fake delay to simulate generation
+        setTimeout(() => {
+            // Build divKey: aiml-se-a (remove '-' from classroom code like SE-A → se-a)
+            const cleanClassroom = classroom.toLowerCase().replace(/-/g, '').replace(/\s+/g, '-');
+            const divKey = `${dept.toLowerCase()}-${cleanClassroom}`;
+
+            // Fake token with timestamp for expiration simulation
+            const fakeToken = `dev-${Date.now().toString(36).slice(-8)}`;
+
+            // Final short URL
+            const generatedUrl = `${window.location.origin}/v?div=${divKey}&t=${fakeToken}`;
+
+            setQrUrl(generatedUrl);
             setShowQR(true);
-            setTimeLeft(300);
-        }
+            setTimeLeft(300); // 5 minutes
+            setIsGenerating(false);
+        }, 400);
     };
 
     const formatTime = (seconds) => {
@@ -33,12 +53,11 @@ export default function QRGenerator() {
         return `${m}:${s < 10 ? '0' : ''}${s}`;
     };
 
-    const [year, div] = classroom ? classroom.split('-') : ['', ''];
-    const votingUrl = `https://ranking-system.com/vote/${dept}/${year}/${div}`;
-
     return (
         <div className="max-w-xl mx-auto border border-black p-8 bg-white">
-            <h2 className="text-lg font-bold uppercase tracking-wide mb-6 text-center">Generate Voting Session</h2>
+            <h2 className="text-lg font-bold uppercase tracking-wide mb-6 text-center">
+                Generate Voting Session
+            </h2>
 
             <div className="space-y-4 mb-8">
                 <div>
@@ -46,11 +65,16 @@ export default function QRGenerator() {
                     <select
                         className="w-full p-2 border border-black rounded-none focus:outline-none focus:ring-1 focus:ring-black"
                         value={dept}
-                        onChange={e => setDept(e.target.value)}
+                        onChange={(e) => {
+                            setDept(e.target.value);
+                            setClassroom(''); // reset classroom when dept changes
+                            setShowQR(false);
+                        }}
                     >
                         <option value="">Select...</option>
                         <option value="cs">Computer Engineering</option>
                         <option value="aiml">AIML</option>
+                        {/* Add more departments as needed */}
                     </select>
                 </div>
 
@@ -59,7 +83,7 @@ export default function QRGenerator() {
                     <select
                         className="w-full p-2 border border-black rounded-none focus:outline-none focus:ring-1 focus:ring-black"
                         value={classroom}
-                        onChange={e => setClassroom(e.target.value)}
+                        onChange={(e) => setClassroom(e.target.value)}
                         disabled={!dept}
                     >
                         <option value="">Select...</option>
@@ -88,26 +112,42 @@ export default function QRGenerator() {
 
                 <Button
                     onClick={handleGenerate}
-                    disabled={!dept || !classroom || showQR}
-                    className={`w-full ${showQR ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    disabled={!dept || !classroom || showQR || isGenerating}
+                    className={`w-full ${showQR || isGenerating ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                    {showQR ? 'Session Active' : 'Generate QR Code'}
+                    {isGenerating
+                        ? 'Generating...'
+                        : showQR
+                            ? 'Session Active'
+                            : 'Generate QR Code (5 min)'}
                 </Button>
             </div>
 
-            {showQR && (
+            {showQR && timeLeft > 0 && (
                 <div className="flex flex-col items-center justify-center p-6 bg-gray-50 border border-gray-200">
-                    <QRCodeCanvas value={votingUrl} size={200} level="H" />
-                    <p className="mt-4 text-xs tracking-widest uppercase text-gray-500">Scan to Vote</p>
-                    <div className="mt-4 text-2xl font-bold font-mono">
+                    <QRCodeSVG
+                        value={qrUrl}
+                        size={200}
+                        fgColor="#000000"
+                        bgColor="#ffffff"
+                        level="H"
+                    />
+                    <p className="mt-4 text-xs tracking-widest uppercase text-gray-500">
+                        Scan to Vote
+                    </p>
+                    <div className="mt-4 text-2xl font-bold font-mono text-black">
                         Time Remaining: {formatTime(timeLeft)}
                     </div>
-                    <p className="text-xs text-red-600 font-bold mt-2 uppercase">Do not refresh</p>
+                    <p className="text-xs text-red-600 font-bold mt-2 uppercase">
+                        Do not refresh or share
+                    </p>
                 </div>
             )}
 
-            {timeLeft === 0 && !showQR && dept && classroom && (
-                <p className="text-center text-sm text-gray-500 mt-4">Session expired. Generate a new code.</p>
+            {timeLeft === 0 && showQR && (
+                <p className="text-center text-sm text-gray-500 mt-4">
+                    Session expired. Generate a new QR code.
+                </p>
             )}
         </div>
     );
