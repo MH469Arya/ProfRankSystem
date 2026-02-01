@@ -71,21 +71,30 @@ export default function SubjectManager() {
     setFormData({ name: "", sem: "" });
   };
 
-  const handleDelete = async (id) => {
-    if (!confirm("Remove this subject?")) return;
+  const handleDelete = async (id, name) => {
+    if (!confirm(`Remove ${name}?`)) return;
+    const token = localStorage.getItem("token");
 
-    try {
-      await fetch(`http://localhost:5000/api/subjects/${id}`, {
-        method: "DELETE",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("token")}`,
-        },
-      });
+    const res = await fetch(`http://localhost:5000/api/subjects/${id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-      fetchSubjects();
-    } catch (err) {
-      alert("Failed to delete subject");
+    const data = await res.json();
+
+    if (!res.ok) {
+      if (data.classrooms) {
+        alert(
+          `Cannot delete ${name}\n\nAssigned to:\n` +
+            data.classrooms.join("\n"),
+        );
+      } else {
+        alert(data.message || "Delete failed");
+      }
+      return;
     }
+
+    await fetchSubjects();
   };
 
   return (
@@ -121,7 +130,7 @@ export default function SubjectManager() {
               </Button>
               <Button
                 variant="danger"
-                onClick={() => handleDelete(s.id)}
+                onClick={() => handleDelete(s.id, s.name)}
                 className="text-xs px-2 py-1"
               >
                 Remove

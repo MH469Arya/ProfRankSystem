@@ -43,8 +43,8 @@ export default function HODDashboard() {
 
             <div className="border-b border-gray-200 bg-gray-50 px-8">
                 <div className="flex gap-4">
-                    <TabButton id="divisions" label="Divisions" />
-                    <TabButton id="teachers" label="Teachers" />
+                    <TabButton id="divisions" label="Classrooms" />
+                    <TabButton id="teachers" label="Professors" />
                     <TabButton id="subjects" label="Subjects" />
                 </div>
             </div>

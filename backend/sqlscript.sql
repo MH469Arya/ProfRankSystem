@@ -1,4 +1,4 @@
--- Active: 1769700717965@@127.0.0.1@3306
+-- Active: 1758452166660@@127.0.0.1@3306@prs_database
 
 DROP DATABASE prs_database;
 CREATE DATABASE prs_database;
@@ -43,12 +43,13 @@ CREATE TABLE IF NOT EXISTS subs(
     FOREIGN KEY (dept_id) REFERENCES depts(id)
 )
 
+DROP TABLE class_linkings;
 CREATE TABLE IF NOT EXISTS class_linkings(
     id INT PRIMARY KEY AUTO_INCREMENT,
     class_id INT,
     sub_id INT,
     proff_id INT,
-    FOREIGN KEY (class_id) REFERENCES classes(id),
+    FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE,
     FOREIGN KEY (sub_id) REFERENCES subs(id),
     FOREIGN KEY (proff_id) REFERENCES proffs(id),
     UNIQUE(class_id, sub_id)
