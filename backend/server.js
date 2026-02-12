@@ -601,4 +601,74 @@ app.delete("/api/linkings/:id", authenticate, (req, res) => {
   });
 });
 
+//after voting storing of student responses
+app.post('/api/vote', (req, res) => { 
+    const { token, division, rankings } = req.body;
+
+    // 1. Basic check: Are all fields present?
+    if (!token || !division || !rankings) {
+        return res.status(400).json({ message: "Missing voting data" });
+    }
+
+    // 2. Check if this token has already voted 
+    db.execute(
+        'SELECT id FROM voting_results WHERE student_token = ?', 
+        [token], 
+        (err, existing) => {
+            if (err) {
+                console.error("Duplicate Check Error:", err.message);
+                return res.status(500).json({ message: "Database error" });
+            }
+
+            if (existing.length > 0) {
+                return res.status(403).json({ message: "You have already voted!" });
+            }
+
+            // 3. Insert the vote 
+            const sql = 'INSERT INTO voting_results (student_token, division, rankings) VALUES (?, ?, ?)';
+            db.execute(
+                sql, 
+                [token, division, JSON.stringify(rankings)], 
+                (insertErr, result) => {
+                    if (insertErr) {
+                        console.error("Insertion Error:", insertErr.message);
+                        return res.status(500).json({ message: "Database error during voting" });
+                    }
+
+                    res.status(200).json({ message: "Vote cast successfully" });
+                }
+            );
+        }
+    );
+});
+// to get teachers from proffs
+app.get('/api/teachers', (req, res) => { 
+    const { div } = req.query; 
+
+    if (!div) return res.status(400).json({ message: "Division is required" });
+
+    const deptCode = div.split('-')[0].toUpperCase(); 
+
+    db.execute(
+        `SELECT p.id, p.name 
+         FROM proffs p
+         INNER JOIN depts d ON p.dept_id = d.id
+         WHERE d.code = ?`, 
+        [deptCode],
+        (err, results) => {
+            if (err) {
+                console.error("Database Error:", err.message);
+                return res.status(500).json({ message: "Internal server error" });
+            }
+
+            if (results.length === 0) {
+                return res.status(404).json({ message: "No teachers found" });
+            }
+
+            // Results is the array of teachers
+            res.json(results);
+        }
+    );
+});
+
 app.listen(5000, () => console.log("Server running on http://localhost:5000"));

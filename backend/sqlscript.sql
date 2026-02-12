@@ -1,4 +1,4 @@
--- Active: 1758969651640@@127.0.0.1@3306@prs_database
+-- Active: 1769700717965@@127.0.0.1@3306@prs_database
 
 DROP DATABASE prs_database;
 CREATE DATABASE prs_database;
@@ -123,3 +123,11 @@ INSERT INTO subs (dept_id, name, sem) VALUES
 (3, 'DS Subject 1', 6),(3, 'DS Subject 2', 6),(3, 'DS Subject 3', 6),(3, 'DS Subject 4', 6),(3, 'DS Subject 5', 6),
 (3, 'DS Subject 1', 7),(3, 'DS Subject 2', 7),(3, 'DS Subject 3', 7),(3, 'DS Subject 4', 7),(3, 'DS Subject 5', 7),
 (3, 'DS Subject 1', 8),(3, 'DS Subject 2', 8),(3, 'DS Subject 3', 8),(3, 'DS Subject 4', 8),(3, 'DS Subject 5', 8);
+
+CREATE TABLE voting_results (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    student_token VARCHAR(255) NOT NULL UNIQUE, 
+    division VARCHAR(50) NOT NULL,              
+    rankings JSON NOT NULL,                     
+    submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

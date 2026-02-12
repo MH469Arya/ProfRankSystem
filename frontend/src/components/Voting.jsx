@@ -4,13 +4,14 @@ import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { Button } from './ui/SharedComponents';
 
 // Fake teachers data
-const fakeTeachers = [
-    { id: 't1', name: "Professor 1", subject: "Machine Learning" },
-    { id: 't2', name: "Professor 2", subject: "Data Structures" },
-    { id: 't3', name: "Professor 3", subject: "AI & Ethics" },
-    { id: 't4', name: "Professor 4", subject: "Database Systems" },
-    { id: 't5', name: "Professor 5", subject: "Web Technologies" },
-];
+// const fakeTeachers = [
+//     { id: 't1', name: "Professor 1", subject: "Machine Learning" },
+//     { id: 't2', name: "Professor 2", subject: "Data Structures" },
+//     { id: 't3', name: "Professor 3", subject: "AI & Ethics" },
+//     { id: 't4', name: "Professor 4", subject: "Database Systems" },
+//     { id: 't5', name: "Professor 5", subject: "Web Technologies" },
+// ];
+// Replace the fakeTeachers array with an empty state
 
 export default function Voting() {
     const [searchParams] = useSearchParams();
@@ -18,41 +19,82 @@ export default function Voting() {
     const [remainingTime, setRemainingTime] = useState(0);
 
     // Two lists state: available (bottom) and ranked (top)
-    const [availableTeachers, setAvailableTeachers] = useState(fakeTeachers);
+    const [availableTeachers, setAvailableTeachers] = useState();
     const [rankedTeachers, setRankedTeachers] = useState([]);
 
     const [title, setTitle] = useState('Voting Page');
 
+    // useEffect(() => {
+    //     const div = searchParams.get('div');
+    //     const token = searchParams.get('t');
+
+    //     if (!div || !token) {
+    //         setStatus('invalid');
+    //         return;
+    //     }
+
+    //     if (!token.startsWith('dev-')) {
+    //         setStatus('invalid');
+    //         return;
+    //     }
+
+    //     setStatus('valid');
+    //     setRemainingTime(300); // 5 mins
+
+    //     // Parse title
+    //     try {
+    //         const parts = div.split('-');
+    //         if (parts.length >= 2) {
+    //             const dept = parts[0].toUpperCase();
+    //             const classPart = parts.slice(1).join(' ').toUpperCase();
+    //             setTitle(`Voting for ${dept} - ${classPart}`);
+    //         }
+    //     } catch (e) {
+    //         console.error("Error parsing div", e);
+    //     }
+
+    // }, [searchParams]);
     useEffect(() => {
-        const div = searchParams.get('div');
-        const token = searchParams.get('t');
+    // Extract variables from URL first
+    const div = searchParams.get('div');
+    const token = searchParams.get('t');
 
-        if (!div || !token) {
-            setStatus('invalid');
-            return;
+    // 1. Validation Logic
+    if (!div || !token || !token.startsWith('dev-')) {
+        setStatus('invalid');
+        return;
+    }
+
+    // 2. Parse Title (Optional but nice for UX)
+    try {
+        const parts = div.split('-');
+        if (parts.length >= 2) {
+            const dept = parts[0].toUpperCase();
+            const classPart = parts.slice(1).join(' ').toUpperCase();
+            setTitle(`Voting for ${dept} - ${classPart}`);
         }
+    } catch (e) {
+        console.error("Error parsing div", e);
+    }
 
-        if (!token.startsWith('dev-')) {
-            setStatus('invalid');
-            return;
-        }
-
-        setStatus('valid');
-        setRemainingTime(300); // 5 mins
-
-        // Parse title
+    // 3. Define and Call the fetch function
+    const fetchTeachers = async () => {
         try {
-            const parts = div.split('-');
-            if (parts.length >= 2) {
-                const dept = parts[0].toUpperCase();
-                const classPart = parts.slice(1).join(' ').toUpperCase();
-                setTitle(`Voting for ${dept} - ${classPart}`);
-            }
-        } catch (e) {
-            console.error("Error parsing div", e);
+            const response = await fetch(`http://localhost:5000/api/teachers?div=${div}`);
+            if (!response.ok) throw new Error("Failed to load");
+            const data = await response.json();
+            
+            setAvailableTeachers(data); 
+            setStatus('valid'); 
+            setRemainingTime(300); // Start timer only after data is loaded
+        } catch (err) {
+            console.error(err);
+            setStatus('invalid');
         }
+    };
 
-    }, [searchParams]);
+    fetchTeachers();
+}, [searchParams]); // Dependencies: only re-run if URL params change
 
     // Countdown timer
     useEffect(() => {
@@ -150,9 +192,40 @@ export default function Voting() {
         setRankedTeachers(newRanked);
     };
 
-    const handleSubmit = () => {
-        setStatus('submitted');
-    };
+    // const handleSubmit = () => {
+    //     setStatus('submitted');
+    // };
+    const handleSubmit = async () => {
+    // 1. Get the current URL parameters
+    const token = searchParams.get('t');
+    const div = searchParams.get('div');
+
+    // 2. Map the ranked teachers to an array of just their IDs
+    // Example: [{id: 3, name: '...'}, {id: 1, name: '...'}] becomes [3, 1]
+    const rankingIds = rankedTeachers.map(teacher => teacher.id);
+
+    try {
+        const response = await fetch('http://localhost:5000/api/vote', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                token: token,      // Unique student identifier
+                division: div,     // Class/Year group
+                rankings: rankingIds // The ordered list for Borda calculation
+            }),
+        });
+
+        if (response.ok) {
+            setStatus('submitted'); // Show success screen
+        } else {
+            const errData = await response.json();
+            alert(errData.message || "Failed to submit vote");
+        }
+    } catch (error) {
+        console.error("Submission error:", error);
+        alert("Server error. Please try again later.");
+    }
+};
 
     if (status === 'loading') {
         return (
@@ -221,7 +294,7 @@ export default function Voting() {
                                 {(provided) => (
                                     <div {...provided.droppableProps} ref={provided.innerRef} className="space-y-3 min-h-[200px]">
                                         {rankedTeachers.map((teacher, index) => (
-                                            <Draggable key={teacher.id} draggableId={teacher.id} index={index}>
+                                            <Draggable key={teacher.id} draggableId={teacher.id.toString()} index={index}>
                                                 {(provided) => (
                                                     <div
                                                         ref={provided.innerRef}
@@ -278,7 +351,7 @@ export default function Voting() {
                                 {(provided) => (
                                     <div {...provided.droppableProps} ref={provided.innerRef} className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                         {availableTeachers.map((teacher, index) => (
-                                            <Draggable key={teacher.id} draggableId={teacher.id} index={index}>
+                                            <Draggable key={teacher.id} draggableId={teacher.id.toString()} index={index}>
                                                 {(provided) => (
                                                     <div
                                                         ref={provided.innerRef}
