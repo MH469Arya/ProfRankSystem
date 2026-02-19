@@ -1,17 +1,42 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Table } from './ui/SharedComponents';
 
 export default function RankingView() {
     const [selectedDept, setSelectedDept] = useState('');
     const [selectedYear, setSelectedYear] = useState('');
     const [selectedDiv, setSelectedDiv] = useState('');
+    const [rankings, setRankings] = useState([]);
+    const [totalVotes, setTotalVotes] = useState(0);
 
-    // Mock Data
-    const rankings = [
-        { rank: 1, teacher: 'Teacher 1', subject: 'Algorithms', score: 450, votes: 98 },
-        { rank: 2, teacher: 'Teacher 2', subject: 'Database', score: 410, votes: 95 },
-        { rank: 3, teacher: 'Teacher 3', subject: 'Networking', score: 380, votes: 90 },
-    ];
+    const fullDivision = `${selectedDept}-${selectedYear}${selectedDiv}`;
+
+    const fetchRankings = async () => {
+    if (!selectedDept || !selectedYear || !selectedDiv) return;
+
+    try {
+        const response = await fetch(
+            `http://localhost:5000/api/results?department=${selectedDept}&year=${selectedYear}&division=${selectedDiv}`
+        );
+
+        const data = await response.json();
+
+        setRankings(data.rankings);
+        setTotalVotes(data.totalVotes);
+
+    } catch (error) {
+        console.error("Error fetching rankings:", error);
+    }
+};
+
+useEffect(() => {
+    if (selectedDept && selectedYear && selectedDiv) {
+        fetchRankings();
+    } else {
+        setRankings([]);
+        setTotalVotes(0);
+    }
+}, [selectedDept, selectedYear, selectedDiv]);
+
 
     return (
         <div>
@@ -50,9 +75,9 @@ export default function RankingView() {
                         onChange={(e) => setSelectedDiv(e.target.value)}
                     >
                         <option value="">Select Division</option>
-                        <option value="A">A</option>
-                        <option value="B">B</option>
-                        <option value="C">C</option>
+                        <option value="a">A</option>
+                        <option value="b">B</option>
+                        <option value="c">C</option>
                     </select>
                 </div>
             </div>
@@ -61,7 +86,7 @@ export default function RankingView() {
 
             <Table
                 headers={['Rank', 'Teacher Name', 'Subject', 'Score']}
-                data={selectedDept && selectedYear && selectedDiv ? rankings : []}
+                data={rankings || []}
                 renderRow={(row, i) => (
                     <tr key={i} className="hover:bg-gray-50">
                         <td className="p-3 border-r border-gray-200 font-bold">#{row.rank}</td>
@@ -74,7 +99,7 @@ export default function RankingView() {
 
             {selectedDept && selectedYear && selectedDiv && (
                 <div className="text-center mt-6 text-sm font-medium text-gray-600">
-                    Number of students gave feedback: 58
+                    Number of students gave feedback: {totalVotes}
                 </div>
             )}
 

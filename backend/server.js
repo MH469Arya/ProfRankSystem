@@ -6,6 +6,8 @@ const path = require("path");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const authenticate = require("./middleware/auth");
+const { v4: uuidv4 } = require('uuid');
+
 
 const app = express();
 app.use(express.static(path.join(__dirname, "public")));
@@ -603,44 +605,35 @@ app.delete("/api/linkings/:id", authenticate, (req, res) => {
 
 //after voting storing of student responses
 app.post('/api/vote', (req, res) => { 
-    const { token, division, rankings } = req.body;
+    const { class_session, division, rankings } = req.body;
 
-    // 1. Basic check: Are all fields present?
-    if (!token || !division || !rankings) {
+    if (!class_session || !division || !rankings) {
         return res.status(400).json({ message: "Missing voting data" });
     }
 
-    // 2. Check if this token has already voted 
+    // Generate UUID for this anonymous student
+    const voteSessionId = uuidv4();
+
+    const sql = `
+        INSERT INTO voting_results 
+        (class_session, vote_session_id, division, rankings) 
+        VALUES (?, ?, ?, ?)
+    `;
+
     db.execute(
-        'SELECT id FROM voting_results WHERE student_token = ?', 
-        [token], 
-        (err, existing) => {
+        sql,
+        [class_session, voteSessionId, division, JSON.stringify(rankings)],
+        (err, result) => {
             if (err) {
-                console.error("Duplicate Check Error:", err.message);
-                return res.status(500).json({ message: "Database error" });
+                console.error("Insertion Error:", err.message);
+                return res.status(500).json({ message: "Database error during voting" });
             }
 
-            if (existing.length > 0) {
-                return res.status(403).json({ message: "You have already voted!" });
-            }
-
-            // 3. Insert the vote 
-            const sql = 'INSERT INTO voting_results (student_token, division, rankings) VALUES (?, ?, ?)';
-            db.execute(
-                sql, 
-                [token, division, JSON.stringify(rankings)], 
-                (insertErr, result) => {
-                    if (insertErr) {
-                        console.error("Insertion Error:", insertErr.message);
-                        return res.status(500).json({ message: "Database error during voting" });
-                    }
-
-                    res.status(200).json({ message: "Vote cast successfully" });
-                }
-            );
+            res.status(200).json({ message: "Vote cast successfully" });
         }
     );
 });
+
 // to get teachers from proffs
 app.get('/api/teachers', (req, res) => { 
     const { div } = req.query; 
@@ -670,5 +663,123 @@ app.get('/api/teachers', (req, res) => {
         }
     );
 });
+
+//borda
+app.get('/api/results', (req, res) => {
+
+    const { department, year, division } = req.query;
+
+    if (!department || !year || !division) {
+        return res.status(400).json({ message: "Missing filters" });
+    }
+
+    const fullDivision = `${department}-${year}${division}`.toUpperCase();
+
+    // Get votes
+    db.query(
+        "SELECT rankings FROM voting_results WHERE division = ?",
+        [fullDivision],
+        (err, voteResult) => {
+
+            if (err) {
+                console.error(err);
+                return res.status(500).json({ message: "Server Error" });
+            }
+
+            const votes = voteResult;
+            const totalVotes = votes.length;
+
+            if (totalVotes === 0) {
+                return res.json({
+                    rankings: [],
+                    totalVotes: 0
+                });
+            }
+
+            const scoreMap = {};
+
+            votes.forEach(vote => {
+
+                const rankingArray =
+                    typeof vote.rankings === "string"
+                        ? JSON.parse(vote.rankings)
+                        : vote.rankings;
+
+                const totalTeachers = rankingArray.length;
+
+                rankingArray.forEach((teacherId, index) => {
+                    const points = totalTeachers - index - 1;
+
+                    if (!scoreMap[teacherId]) {
+                        scoreMap[teacherId] = 0;
+                    }
+
+                    scoreMap[teacherId] += points;
+                });
+            });
+
+            const sortedTeachers = Object.entries(scoreMap)
+                .map(([teacherId, score]) => ({
+                    teacherId: parseInt(teacherId),
+                    score
+                }))
+                .sort((a, b) => b.score - a.score);
+
+            const teacherIds = sortedTeachers.map(t => t.teacherId);
+
+            if (teacherIds.length === 0) {
+                return res.json({
+                    rankings: [],
+                    totalVotes
+                });
+            }
+
+            const placeholders = teacherIds.map(() => '?').join(',');
+
+            // Get teacher details to show teacher name on ranking page
+            db.query(
+              `
+              SELECT p.id AS teacherId, p.name
+              FROM proffs p
+              JOIN depts d ON p.dept_id = d.id
+              WHERE p.id IN (${placeholders})
+              AND UPPER(d.code) = UPPER(?)
+              `,
+              [...teacherIds, department],
+              (err, teacherResult) => {
+
+                  if (err) {
+                      console.error(err);
+                      return res.status(500).json({ message: "Server Error" });
+                  }
+
+                  const teacherMap = {};
+
+                  teacherResult.forEach(t => {
+                      teacherMap[t.teacherId] = t;
+                  });
+
+                  const finalRanking = sortedTeachers.map((teacher, index) => {
+                      const details = teacherMap[teacher.teacherId];
+
+                      return {
+                          rank: index + 1,
+                          teacher: details?.name || "Unknown",
+                          subject: "N/A",   
+                          score: teacher.score
+                      };
+                  });
+
+                  res.json({
+                      rankings: finalRanking,
+                      totalVotes
+                  });
+              }
+          );
+
+        }
+    );
+});
+
 
 app.listen(5000, () => console.log("Server running on http://localhost:5000"));

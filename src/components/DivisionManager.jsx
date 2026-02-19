@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Table, Button, Modal, Input } from "./ui/SharedComponents";
+import { Table, Button, Modal, Input } from "./ui/";
 import SearchSelect from "./SearchSelect";
 
 export default function DivisionManager() {

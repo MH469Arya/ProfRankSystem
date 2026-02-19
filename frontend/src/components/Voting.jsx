@@ -3,16 +3,6 @@ import { useSearchParams } from 'react-router-dom';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import { Button } from './ui/SharedComponents';
 
-// Fake teachers data
-// const fakeTeachers = [
-//     { id: 't1', name: "Professor 1", subject: "Machine Learning" },
-//     { id: 't2', name: "Professor 2", subject: "Data Structures" },
-//     { id: 't3', name: "Professor 3", subject: "AI & Ethics" },
-//     { id: 't4', name: "Professor 4", subject: "Database Systems" },
-//     { id: 't5', name: "Professor 5", subject: "Web Technologies" },
-// ];
-// Replace the fakeTeachers array with an empty state
-
 export default function Voting() {
     const [searchParams] = useSearchParams();
     const [status, setStatus] = useState('loading'); // 'loading' | 'valid' | 'invalid' | 'expired' | 'submitted'
@@ -24,36 +14,6 @@ export default function Voting() {
 
     const [title, setTitle] = useState('Voting Page');
 
-    // useEffect(() => {
-    //     const div = searchParams.get('div');
-    //     const token = searchParams.get('t');
-
-    //     if (!div || !token) {
-    //         setStatus('invalid');
-    //         return;
-    //     }
-
-    //     if (!token.startsWith('dev-')) {
-    //         setStatus('invalid');
-    //         return;
-    //     }
-
-    //     setStatus('valid');
-    //     setRemainingTime(300); // 5 mins
-
-    //     // Parse title
-    //     try {
-    //         const parts = div.split('-');
-    //         if (parts.length >= 2) {
-    //             const dept = parts[0].toUpperCase();
-    //             const classPart = parts.slice(1).join(' ').toUpperCase();
-    //             setTitle(`Voting for ${dept} - ${classPart}`);
-    //         }
-    //     } catch (e) {
-    //         console.error("Error parsing div", e);
-    //     }
-
-    // }, [searchParams]);
     useEffect(() => {
     // Extract variables from URL first
     const div = searchParams.get('div');
@@ -192,12 +152,9 @@ export default function Voting() {
         setRankedTeachers(newRanked);
     };
 
-    // const handleSubmit = () => {
-    //     setStatus('submitted');
-    // };
     const handleSubmit = async () => {
     // 1. Get the current URL parameters
-    const token = searchParams.get('t');
+    const class_session = searchParams.get('t');
     const div = searchParams.get('div');
 
     // 2. Map the ranked teachers to an array of just their IDs
@@ -209,14 +166,14 @@ export default function Voting() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                token: token,      // Unique student identifier
-                division: div,     // Class/Year group
+                class_session: class_session,     
+                division: div,     
                 rankings: rankingIds // The ordered list for Borda calculation
             }),
         });
 
         if (response.ok) {
-            setStatus('submitted'); // Show success screen
+            setStatus('submitted'); 
         } else {
             const errData = await response.json();
             alert(errData.message || "Failed to submit vote");
