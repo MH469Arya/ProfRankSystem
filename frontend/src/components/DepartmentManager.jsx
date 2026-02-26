@@ -10,7 +10,7 @@ export default function DepartmentManager() {
    useEffect(() => {
     const initData = async () => {
         try {
-            const response = await fetch('http://localhost:5000/api/departments');
+            const response = await fetch('/api/departments');
             const dbData = await response.json();
             
             const mappedData = dbData.map(dept => ({
@@ -38,14 +38,14 @@ export default function DepartmentManager() {
     };
 
     try {
-        const response = await fetch('http://localhost:5000/api/departments', {
+        const response = await fetch('/api/departments', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
 
         if (response.ok) {
-            const res = await fetch('http://localhost:5000/api/departments');
+            const res = await fetch('/api/departments');
             const data = await res.json();
             setDepartments(data.map(d => ({ id: d.id, name: d.code })));
             closeModal();

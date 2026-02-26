@@ -13,7 +13,7 @@ export default function TeacherManager() {
 
   const fetchProffs = async () => {
     const token = localStorage.getItem("token");
-    const res = await fetch("http://localhost:5000/api/proffs", {
+    const res = await fetch("/api/proffs", {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -27,7 +27,7 @@ export default function TeacherManager() {
     const token = localStorage.getItem("token");
 
     if (editingId) {
-      await fetch(`http://localhost:5000/api/proffs/${editingId}`, {
+      await fetch(`/api/proffs/${editingId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -36,7 +36,7 @@ export default function TeacherManager() {
         body: JSON.stringify(formData),
       });
     } else {
-      await fetch("http://localhost:5000/api/proffs", {
+      await fetch("/api/proffs", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -71,7 +71,7 @@ export default function TeacherManager() {
 
     const token = localStorage.getItem("token");
 
-    const res = await fetch(`http://localhost:5000/api/proffs/${id}`, {
+    const res = await fetch(`/api/proffs/${id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });

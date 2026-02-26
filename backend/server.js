@@ -1,6 +1,6 @@
 require("dotenv").config();
 const express = require("express");
-const cors = require("cors");
+//const cors = require("cors");
 const mysql = require("mysql2");
 const path = require("path");
 const bcrypt = require("bcrypt");
@@ -10,8 +10,15 @@ const { v4: uuidv4 } = require('uuid');
 
 
 const app = express();
+/*app.use(cors({
+  origin: '*',                        // Allow any origin (including your mobile's IP-based origin)
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],  // Allow JSON body + auth if you use it later
+  credentials: true,                  // Allow cookies/sessions if you ever add them (harmless here)
+  preflightContinue: false,
+  optionsSuccessStatus: 204           // Some browsers need this for OPTIONS
+}));*/
 app.use(express.static(path.join(__dirname, "public")));
-app.use(cors());
 app.use(express.json());
 const db = mysql.createConnection({
   host: process.env.DB_HOST,
@@ -629,10 +636,34 @@ app.post('/api/vote', (req, res) => {
                 return res.status(500).json({ message: "Database error during voting" });
             }
 
-            res.status(200).json({ message: "Vote cast successfully" });
+            res.status(200).json({ message: "Vote cast successfully" , vote_session_id: voteSessionId });
         }
     );
 });
+
+app.post('/api/check_vote', (req, res) => {
+    const { vote_session_id, class_session } = req.body;
+
+    if (!vote_session_id || !class_session) {
+        return res.status(400).json({ message: "Missing session details" });
+    }
+
+    const sql = `
+        SELECT id FROM voting_results 
+        WHERE vote_session_id = ? AND class_session = ?
+        LIMIT 1
+    `;
+
+    db.query(sql, [vote_session_id, class_session], (err, results) => {
+        if (err) {
+            console.error("Check Vote Error:", err.message);
+            return res.status(500).json({ message: "DB error checking vote" });
+        }
+
+        res.json({ has_voted: results.length > 0 });
+    });
+});
+
 
 // to get teachers from proffs
 app.get('/api/teachers', (req, res) => { 
@@ -782,4 +813,4 @@ app.get('/api/results', (req, res) => {
 });
 
 
-app.listen(5000, () => console.log("Server running on http://localhost:5000"));
+app.listen(5000, '0.0.0.0', () => console.log("Server running on http://localhost:5000"));

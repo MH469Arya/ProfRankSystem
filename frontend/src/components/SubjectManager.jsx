@@ -8,7 +8,7 @@ export default function SubjectManager() {
   const [formData, setFormData] = useState({ name: "", sem: "" });
 
   const fetchSubjects = async () => {
-    const res = await fetch("http://localhost:5000/api/subjects", {
+    const res = await fetch("/api/subjects", {
       headers: {
         Authorization: `Bearer ${localStorage.getItem("token")}`,
       },
@@ -27,7 +27,7 @@ export default function SubjectManager() {
     try {
       if (editingId) {
         // EDIT
-        await fetch(`http://localhost:5000/api/subjects/${editingId}`, {
+        await fetch(`/api/subjects/${editingId}`, {
           method: "PUT",
           headers: {
             "Content-Type": "application/json",
@@ -37,7 +37,7 @@ export default function SubjectManager() {
         });
       } else {
         // ADD
-        await fetch("http://localhost:5000/api/subjects", {
+        await fetch("/api/subjects", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -75,7 +75,7 @@ export default function SubjectManager() {
     if (!confirm(`Remove ${name}?`)) return;
     const token = localStorage.getItem("token");
 
-    const res = await fetch(`http://localhost:5000/api/subjects/${id}`, {
+    const res = await fetch(`/api/subjects/${id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });

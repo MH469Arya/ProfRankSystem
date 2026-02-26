@@ -15,7 +15,7 @@ export default function RankingView() {
 
     try {
         const response = await fetch(
-            `http://localhost:5000/api/results?department=${selectedDept}&year=${selectedYear}&division=${selectedDiv}`
+            `/api/results?department=${selectedDept}&year=${selectedYear}&division=${selectedDiv}`
         );
 
         const data = await response.json();

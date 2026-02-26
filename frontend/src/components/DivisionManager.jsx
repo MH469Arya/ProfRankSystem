@@ -30,7 +30,7 @@ export default function DivisionManager() {
 
   const fetchTeachers = async () => {
     const token = localStorage.getItem("token");
-    const res = await fetch("http://localhost:5000/api/proffs", {
+    const res = await fetch("/api/proffs", {
       headers: { Authorization: `Bearer ${token}` },
     });
     setTeachers(await res.json());
@@ -38,7 +38,7 @@ export default function DivisionManager() {
 
   const fetchSubjects = async () => {
     const token = localStorage.getItem("token");
-    const res = await fetch("http://localhost:5000/api/subjects", {
+    const res = await fetch("/api/subjects", {
       headers: { Authorization: `Bearer ${token}` },
     });
     setSubjects(await res.json());
@@ -47,7 +47,7 @@ export default function DivisionManager() {
   const fetchClassrooms = async () => {
     const token = localStorage.getItem("token");
 
-    const res = await fetch("http://localhost:5000/api/classes", {
+    const res = await fetch("/api/classes", {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -73,7 +73,7 @@ export default function DivisionManager() {
     };
 
     if (editingClassroomId) {
-      await fetch(`http://localhost:5000/api/classes/${editingClassroomId}`, {
+      await fetch(`/api/classes/${editingClassroomId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -82,7 +82,7 @@ export default function DivisionManager() {
         body: JSON.stringify(payload),
       });
     } else {
-      await fetch("http://localhost:5000/api/classes", {
+      await fetch("/api/classes", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -117,7 +117,7 @@ export default function DivisionManager() {
 
     const token = localStorage.getItem("token");
 
-    await fetch(`http://localhost:5000/api/classes/${id}`, {
+    await fetch(`/api/classes/${id}`, {
       method: "DELETE",
       headers: {
         Authorization: `Bearer ${token}`,
@@ -135,7 +135,7 @@ export default function DivisionManager() {
     const token = localStorage.getItem("token");
 
     const res = await fetch(
-      `http://localhost:5000/api/classes/${cls.id}/linkings`,
+      `/api/classes/${cls.id}/linkings`,
       { headers: { Authorization: `Bearer ${token}` } },
     );
 
@@ -158,7 +158,7 @@ export default function DivisionManager() {
     const token = localStorage.getItem("token");
 
     if (editingAssignmentId) {
-      await fetch(`http://localhost:5000/api/linkings/${editingAssignmentId}`, {
+      await fetch(`/api/linkings/${editingAssignmentId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
@@ -168,7 +168,7 @@ export default function DivisionManager() {
       });
     } else {
       await fetch(
-        `http://localhost:5000/api/classes/${selectedClassroom.id}/linkings`,
+        `/api/classes/${selectedClassroom.id}/linkings`,
         {
           method: "POST",
           headers: {
@@ -198,7 +198,7 @@ export default function DivisionManager() {
   const handleDeleteAssignment = async (id) => {
     const token = localStorage.getItem("token");
 
-    await fetch(`http://localhost:5000/api/linkings/${id}`, {
+    await fetch(`/api/linkings/${id}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });

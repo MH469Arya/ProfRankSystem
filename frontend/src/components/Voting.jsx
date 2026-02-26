@@ -5,7 +5,7 @@ import { Button } from './ui/SharedComponents';
 
 export default function Voting() {
     const [searchParams] = useSearchParams();
-    const [status, setStatus] = useState('loading'); // 'loading' | 'valid' | 'invalid' | 'expired' | 'submitted'
+    const [status, setStatus] = useState('loading'); // 'loading' | 'valid' | 'invalid' | 'expired' | 'submitted' | 'already_voted'
     const [remainingTime, setRemainingTime] = useState(0);
 
     // Two lists state: available (bottom) and ranked (top)
@@ -15,48 +15,80 @@ export default function Voting() {
     const [title, setTitle] = useState('Voting Page');
 
     useEffect(() => {
-    // Extract variables from URL first
-    const div = searchParams.get('div');
-    const token = searchParams.get('t');
+        // Extract variables from URL first
+        const div = searchParams.get('div');
+        const token = searchParams.get('t');  // class_session
 
-    // 1. Validation Logic
-    if (!div || !token || !token.startsWith('dev-')) {
-        setStatus('invalid');
-        return;
-    }
-
-    // 2. Parse Title (Optional but nice for UX)
-    try {
-        const parts = div.split('-');
-        if (parts.length >= 2) {
-            const dept = parts[0].toUpperCase();
-            const classPart = parts.slice(1).join(' ').toUpperCase();
-            setTitle(`Voting for ${dept} - ${classPart}`);
-        }
-    } catch (e) {
-        console.error("Error parsing div", e);
-    }
-
-    // 3. Define and Call the fetch function
-    const fetchTeachers = async () => {
-        try {
-            const response = await fetch(`http://localhost:5000/api/teachers?div=${div}`);
-            if (!response.ok) throw new Error("Failed to load");
-            const data = await response.json();
-            
-            setAvailableTeachers(data); 
-            setStatus('valid'); 
-            setRemainingTime(300); // Start timer only after data is loaded
-        } catch (err) {
-            console.error(err);
+        // 1. Validation Logic
+        if (!div || !token || !token.startsWith('dev-')) {
             setStatus('invalid');
+            return;
         }
-    };
 
-    fetchTeachers();
-}, [searchParams]); // Dependencies: only re-run if URL params change
+        // 2. Parse Title (Optional but nice for UX)
+        try {
+            const parts = div.split('-');
+            if (parts.length >= 2) {
+                const dept = parts[0].toUpperCase();
+                const classPart = parts.slice(1).join(' ').toUpperCase();
+                setTitle(`Voting for ${dept} - ${classPart}`);
+            }
+        } catch (e) {
+            console.error("Error parsing div", e);
+        }
 
-    // Countdown timer
+        // 3. Check if already voted (before fetching teachers)
+        const checkAlreadyVoted = async () => {
+            const storedSessionId = localStorage.getItem(`voteSession_${token}`);
+            if (storedSessionId) {
+                try {
+                    const response = await fetch('/api/check_vote', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            vote_session_id: storedSessionId,
+                            class_session: token
+                        })
+                    });
+                    const data = await response.json();
+                    if (data.has_voted) {
+                        setStatus('already_voted');
+                        return true;  // Already voted, stop
+                    }
+                } catch (err) {
+                    console.error("Check vote error:", err);
+                }
+            }
+            return false;  // Not voted
+        };
+
+        // 4. Fetch teachers if not already voted
+        const init = async () => {
+            const hasVoted = await checkAlreadyVoted();
+            if (hasVoted) return;
+
+            const fetchTeachers = async () => {
+                try {
+                    const response = await fetch(`/api/teachers?div=${div}`);
+                    if (!response.ok) throw new Error("Failed to load");
+                    const data = await response.json();
+                    
+                    setAvailableTeachers(data); 
+                    setStatus('valid'); 
+                    setRemainingTime(300); // Start timer only after data is loaded
+                } catch (err) {
+                    console.error(err);
+                    setStatus('invalid');
+                }
+            };
+
+            fetchTeachers();
+        };
+
+        init();
+    }, [searchParams]); // Dependencies: only re-run if URL params change
+
+    // Countdown timer (unchanged)
     useEffect(() => {
         if (status !== 'valid' || remainingTime <= 0) return;
 
@@ -79,7 +111,7 @@ export default function Voting() {
         return `${m}:${s < 10 ? '0' : ''}${s}`;
     };
 
-    // Moves an item from one list to another or reorders within the same list
+    // Drag/drop logic (unchanged)
     const move = (source, destination, droppableSource, droppableDestination) => {
         const sourceClone = Array.from(source);
         const destClone = Array.from(destination);
@@ -103,12 +135,8 @@ export default function Voting() {
     const onDragEnd = (result) => {
         const { source, destination } = result;
 
-        // Dropped outside the list
-        if (!destination) {
-            return;
-        }
+        if (!destination) return;
 
-        // Reordering within the same list
         if (source.droppableId === destination.droppableId) {
             const items = source.droppableId === 'ranked' ? rankedTeachers : availableTeachers;
             const reorderedItems = reorder(items, source.index, destination.index);
@@ -119,7 +147,6 @@ export default function Voting() {
                 setAvailableTeachers(reorderedItems);
             }
         } else {
-            // Moving between lists
             const resultList = move(
                 source.droppableId === 'ranked' ? rankedTeachers : availableTeachers,
                 destination.droppableId === 'ranked' ? rankedTeachers : availableTeachers,
@@ -137,7 +164,7 @@ export default function Voting() {
         }
     };
 
-    // Ranking Arrows Logic
+    // Ranking Arrows Logic (unchanged)
     const moveUp = (index) => {
         if (index === 0) return;
         const newRanked = [...rankedTeachers];
@@ -153,36 +180,38 @@ export default function Voting() {
     };
 
     const handleSubmit = async () => {
-    // 1. Get the current URL parameters
-    const class_session = searchParams.get('t');
-    const div = searchParams.get('div');
+        // 1. Get the current URL parameters
+        const class_session = searchParams.get('t');
+        const div = searchParams.get('div');
 
-    // 2. Map the ranked teachers to an array of just their IDs
-    // Example: [{id: 3, name: '...'}, {id: 1, name: '...'}] becomes [3, 1]
-    const rankingIds = rankedTeachers.map(teacher => teacher.id);
+        // 2. Map the ranked teachers to an array of just their IDs
+        const rankingIds = rankedTeachers.map(teacher => teacher.id);
 
-    try {
-        const response = await fetch('http://localhost:5000/api/vote', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                class_session: class_session,     
-                division: div,     
-                rankings: rankingIds // The ordered list for Borda calculation
-            }),
-        });
+        try {
+            const response = await fetch('/api/vote', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    class_session: class_session,     
+                    division: div,     
+                    rankings: rankingIds // The ordered list for Borda calculation
+                }),
+            });
 
-        if (response.ok) {
-            setStatus('submitted'); 
-        } else {
-            const errData = await response.json();
-            alert(errData.message || "Failed to submit vote");
+            if (response.ok) {
+                const data = await response.json();
+                // Store the vote_session_id in localStorage, keyed by class_session
+                localStorage.setItem(`voteSession_${class_session}`, data.vote_session_id);
+                setStatus('submitted'); 
+            } else {
+                const errData = await response.json();
+                alert(errData.message || "Failed to submit vote");
+            }
+        } catch (error) {
+            console.error("Submission error:", error);
+            alert("Server error. Please try again later.");
         }
-    } catch (error) {
-        console.error("Submission error:", error);
-        alert("Server error. Please try again later.");
-    }
-};
+    };
 
     if (status === 'loading') {
         return (
@@ -192,7 +221,7 @@ export default function Voting() {
         );
     }
 
-    if (status === 'invalid' || status === 'expired') {
+    if (status === 'invalid' || status === 'expired' || status === 'already_voted') {
         return (
             <div className="min-h-screen flex items-center justify-center bg-white p-4">
                 <div className="border border-black p-8 text-center max-w-md w-full">
@@ -200,7 +229,9 @@ export default function Voting() {
                     <p className="text-gray-700">
                         {status === 'invalid'
                             ? 'This voting link is invalid.'
-                            : 'This voting session has expired.'}
+                            : status === 'expired'
+                            ? 'This voting session has expired.'
+                            : 'You have already voted in this session.'}
                     </p>
                 </div>
             </div>
