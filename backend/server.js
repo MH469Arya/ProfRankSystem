@@ -6,8 +6,7 @@ const path = require("path");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const authenticate = require("./middleware/auth");
-const { v4: uuidv4 } = require('uuid');
-
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 /*app.use(cors({
@@ -207,7 +206,7 @@ app.delete("/api/subjects/:id", authenticate, (req, res) => {
     if (rows.length > 0) {
       return res.status(409).json({
         message: "Subject is assigned to classrooms",
-        classrooms: rows.map(r => `${r.year} ${r.division}`)
+        classrooms: rows.map((r) => `${r.year} ${r.division}`),
       });
     }
 
@@ -223,7 +222,6 @@ app.delete("/api/subjects/:id", authenticate, (req, res) => {
     });
   });
 });
-
 
 // add subject
 app.post("/api/subjects", authenticate, (req, res) => {
@@ -354,7 +352,7 @@ app.delete("/api/proffs/:id", authenticate, (req, res) => {
     if (rows.length > 0) {
       return res.status(409).json({
         message: "Professor is assigned to classrooms",
-        classrooms: rows.map(r => `${r.year} ${r.division}`)
+        classrooms: rows.map((r) => `${r.year} ${r.division}`),
       });
     }
 
@@ -371,9 +369,6 @@ app.delete("/api/proffs/:id", authenticate, (req, res) => {
     });
   });
 });
-
-
-
 
 // GET classrooms
 app.get("/api/classes", authenticate, (req, res) => {
@@ -429,7 +424,7 @@ app.post("/api/classes", authenticate, (req, res) => {
     res.status(201).json({
       id: result.insertId,
       year,
-      division
+      division,
     });
   });
 });
@@ -492,7 +487,6 @@ app.delete("/api/classes/:id", authenticate, (req, res) => {
     res.json({ message: "Classroom deleted" });
   });
 });
-
 
 // GET class linkings
 app.get("/api/classes/:id/linkings", authenticate, (req, res) => {
@@ -611,206 +605,239 @@ app.delete("/api/linkings/:id", authenticate, (req, res) => {
 });
 
 //after voting storing of student responses
-app.post('/api/vote', (req, res) => { 
-    const { class_session, division, rankings } = req.body;
+app.post("/api/vote", (req, res) => {
+  const { class_session, division, rankings } = req.body;
 
-    if (!class_session || !division || !rankings) {
-        return res.status(400).json({ message: "Missing voting data" });
-    }
+  if (!class_session || !division || !rankings) {
+    return res.status(400).json({ message: "Missing voting data" });
+  }
 
-    // Generate UUID for this anonymous student
-    const voteSessionId = uuidv4();
+  // Generate UUID for this anonymous student
+  const voteSessionId = uuidv4();
 
-    const sql = `
+  const sql = `
         INSERT INTO voting_results 
         (class_session, vote_session_id, division, rankings) 
         VALUES (?, ?, ?, ?)
     `;
 
-    db.execute(
-        sql,
-        [class_session, voteSessionId, division, JSON.stringify(rankings)],
-        (err, result) => {
-            if (err) {
-                console.error("Insertion Error:", err.message);
-                return res.status(500).json({ message: "Database error during voting" });
-            }
+  db.execute(
+    sql,
+    [class_session, voteSessionId, division, JSON.stringify(rankings)],
+    (err, result) => {
+      if (err) {
+        console.error("Insertion Error:", err.message);
+        return res
+          .status(500)
+          .json({ message: "Database error during voting" });
+      }
 
-            res.status(200).json({ message: "Vote cast successfully" , vote_session_id: voteSessionId });
-        }
-    );
+      res
+        .status(200)
+        .json({
+          message: "Vote cast successfully",
+          vote_session_id: voteSessionId,
+        });
+    },
+  );
 });
 
-app.post('/api/check_vote', (req, res) => {
-    const { vote_session_id, class_session } = req.body;
+app.post("/api/check_vote", (req, res) => {
+  const { vote_session_id, class_session } = req.body;
 
-    if (!vote_session_id || !class_session) {
-        return res.status(400).json({ message: "Missing session details" });
-    }
+  if (!vote_session_id || !class_session) {
+    return res.status(400).json({ message: "Missing session details" });
+  }
 
-    const sql = `
+  const sql = `
         SELECT id FROM voting_results 
         WHERE vote_session_id = ? AND class_session = ?
         LIMIT 1
     `;
 
-    db.query(sql, [vote_session_id, class_session], (err, results) => {
-        if (err) {
-            console.error("Check Vote Error:", err.message);
-            return res.status(500).json({ message: "DB error checking vote" });
-        }
+  db.query(sql, [vote_session_id, class_session], (err, results) => {
+    if (err) {
+      console.error("Check Vote Error:", err.message);
+      return res.status(500).json({ message: "DB error checking vote" });
+    }
 
-        res.json({ has_voted: results.length > 0 });
-    });
+    res.json({ has_voted: results.length > 0 });
+  });
 });
 
-
 // to get teachers from proffs
-app.get('/api/teachers', (req, res) => { 
-    const { div } = req.query; 
+app.get("/api/teachers", (req, res) => {
+  const { div } = req.query;
 
-    if (!div) return res.status(400).json({ message: "Division is required" });
+  if (!div) return res.status(400).json({ message: "Division is required" });
 
-    const deptCode = div.split('-')[0].toUpperCase(); 
+  const deptCode = div.split("-")[0].toUpperCase();
 
-    db.execute(
-        `SELECT p.id, p.name 
+  db.execute(
+    `SELECT p.id, p.name 
          FROM proffs p
          INNER JOIN depts d ON p.dept_id = d.id
-         WHERE d.code = ?`, 
-        [deptCode],
-        (err, results) => {
-            if (err) {
-                console.error("Database Error:", err.message);
-                return res.status(500).json({ message: "Internal server error" });
-            }
+         WHERE d.code = ?`,
+    [deptCode],
+    (err, results) => {
+      if (err) {
+        console.error("Database Error:", err.message);
+        return res.status(500).json({ message: "Internal server error" });
+      }
 
-            if (results.length === 0) {
-                return res.status(404).json({ message: "No teachers found" });
-            }
+      if (results.length === 0) {
+        return res.status(404).json({ message: "No teachers found" });
+      }
 
-            // Results is the array of teachers
-            res.json(results);
-        }
-    );
+      // Results is the array of teachers
+      res.json(results);
+    },
+  );
 });
 
 //borda
-app.get('/api/results', (req, res) => {
+app.get("/api/results", (req, res) => {
+  const { department, year, division } = req.query;
 
-    const { department, year, division } = req.query;
+  if (!department || !year || !division) {
+    return res.status(400).json({ message: "Missing filters" });
+  }
 
-    if (!department || !year || !division) {
-        return res.status(400).json({ message: "Missing filters" });
-    }
+  const fullDivision = `${department}-${year}${division}`.toUpperCase();
 
-    const fullDivision = `${department}-${year}${division}`.toUpperCase();
+  // Get votes
+  db.query(
+    "SELECT rankings FROM voting_results WHERE division = ?",
+    [fullDivision],
+    (err, voteResult) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Server Error" });
+      }
 
-    // Get votes
-    db.query(
-        "SELECT rankings FROM voting_results WHERE division = ?",
-        [fullDivision],
-        (err, voteResult) => {
+      const votes = voteResult;
+      const totalVotes = votes.length;
 
-            if (err) {
-                console.error(err);
-                return res.status(500).json({ message: "Server Error" });
-            }
+      if (totalVotes === 0) {
+        return res.json({
+          rankings: [],
+          totalVotes: 0,
+        });
+      }
 
-            const votes = voteResult;
-            const totalVotes = votes.length;
+      const scoreMap = {};
 
-            if (totalVotes === 0) {
-                return res.json({
-                    rankings: [],
-                    totalVotes: 0
-                });
-            }
+      votes.forEach((vote) => {
+        const rankingArray =
+          typeof vote.rankings === "string"
+            ? JSON.parse(vote.rankings)
+            : vote.rankings;
 
-            const scoreMap = {};
+        const totalTeachers = rankingArray.length;
 
-            votes.forEach(vote => {
+        rankingArray.forEach((teacherId, index) => {
+          const points = totalTeachers - index - 1;
 
-                const rankingArray =
-                    typeof vote.rankings === "string"
-                        ? JSON.parse(vote.rankings)
-                        : vote.rankings;
+          if (!scoreMap[teacherId]) {
+            scoreMap[teacherId] = 0;
+          }
 
-                const totalTeachers = rankingArray.length;
+          scoreMap[teacherId] += points;
+        });
+      });
 
-                rankingArray.forEach((teacherId, index) => {
-                    const points = totalTeachers - index - 1;
+      const sortedTeachers = Object.entries(scoreMap)
+        .map(([teacherId, score]) => ({
+          teacherId: parseInt(teacherId),
+          score,
+        }))
+        .sort((a, b) => b.score - a.score);
 
-                    if (!scoreMap[teacherId]) {
-                        scoreMap[teacherId] = 0;
-                    }
+      const teacherIds = sortedTeachers.map((t) => t.teacherId);
 
-                    scoreMap[teacherId] += points;
-                });
-            });
+      if (teacherIds.length === 0) {
+        return res.json({
+          rankings: [],
+          totalVotes,
+        });
+      }
 
-            const sortedTeachers = Object.entries(scoreMap)
-                .map(([teacherId, score]) => ({
-                    teacherId: parseInt(teacherId),
-                    score
-                }))
-                .sort((a, b) => b.score - a.score);
+      const placeholders = teacherIds.map(() => "?").join(",");
 
-            const teacherIds = sortedTeachers.map(t => t.teacherId);
-
-            if (teacherIds.length === 0) {
-                return res.json({
-                    rankings: [],
-                    totalVotes
-                });
-            }
-
-            const placeholders = teacherIds.map(() => '?').join(',');
-
-            // Get teacher details to show teacher name on ranking page
-            db.query(
-              `
+      // Get teacher details to show teacher name on ranking page
+      db.query(
+        `
               SELECT p.id AS teacherId, p.name
               FROM proffs p
               JOIN depts d ON p.dept_id = d.id
               WHERE p.id IN (${placeholders})
               AND UPPER(d.code) = UPPER(?)
               `,
-              [...teacherIds, department],
-              (err, teacherResult) => {
+        [...teacherIds, department],
+        (err, teacherResult) => {
+          if (err) {
+            console.error(err);
+            return res.status(500).json({ message: "Server Error" });
+          }
 
-                  if (err) {
-                      console.error(err);
-                      return res.status(500).json({ message: "Server Error" });
-                  }
+          const teacherMap = {};
 
-                  const teacherMap = {};
+          teacherResult.forEach((t) => {
+            teacherMap[t.teacherId] = t;
+          });
 
-                  teacherResult.forEach(t => {
-                      teacherMap[t.teacherId] = t;
-                  });
+          const finalRanking = sortedTeachers.map((teacher, index) => {
+            const details = teacherMap[teacher.teacherId];
 
-                  const finalRanking = sortedTeachers.map((teacher, index) => {
-                      const details = teacherMap[teacher.teacherId];
+            return {
+              rank: index + 1,
+              teacher: details?.name || "Unknown",
+              subject: "N/A",
+              score: teacher.score,
+            };
+          });
 
-                      return {
-                          rank: index + 1,
-                          teacher: details?.name || "Unknown",
-                          subject: "N/A",   
-                          score: teacher.score
-                      };
-                  });
+          res.json({
+            rankings: finalRanking,
+            totalVotes,
+          });
+        },
+      );
+    },
+  );
+});
 
-                  res.json({
-                      rankings: finalRanking,
-                      totalVotes
-                  });
-              }
-          );
+//get classes for qr generation
+app.get("/api/principal/classes", authenticate, (req, res) => {
+  const { role } = req.user;
 
-        }
-    );
+  // Only principal can access
+  if (role !== "SUPER_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  const sql = `
+    SELECT 
+      c.id,
+      c.year,
+      c.division,
+      d.code AS dept
+    FROM classes c
+    JOIN depts d ON c.dept_id = d.id
+    ORDER BY d.code, c.year, c.division
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error("Classes fetch error:", err);
+      return res.status(500).json({ message: "Database error" });
+    }
+
+    res.json(results);
+  });
 });
 
 
-app.listen(5000, '0.0.0.0', () => console.log("Server running on http://localhost:5000"));
+app.listen(5000, "0.0.0.0", () =>
+  console.log("Server running on http://localhost:5000"),
+);

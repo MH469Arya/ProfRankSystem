@@ -74,7 +74,7 @@ export default function DepartmentManager() {
    const handleDelete = async (id) => {
     if (window.confirm('Are you sure you want to delete this department?')) {
         try {
-            const response = await fetch(`http://localhost:5000/api/departments/${id}`, {
+            const response = await fetch(`/api/departments/${id}`, {
                 method: 'DELETE',
             });
 
