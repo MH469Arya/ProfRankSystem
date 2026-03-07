@@ -77,7 +77,7 @@ export default function RankingView() {
 
   useEffect(() => {
     const fetchAcademicYears = async () => {
-      if (!selectedDept || !selectedYear || !selectedDiv || !selectedAcademicYear) return;
+      if (!selectedDept || !selectedYear || !selectedDiv) return;
 
       const res = await fetch(
         `/api/academic-years?department=${selectedDept}&year=${selectedYear}&division=${selectedDiv}`,
@@ -87,8 +87,8 @@ export default function RankingView() {
 
       setAcademicYears(data);
 
-      if (data.length > 0) {
-        setSelectedAcademicYear(data[0]); // latest automatically
+      if (data.length > 0 && !selectedAcademicYear) {
+        setSelectedAcademicYear(data[0]);
       }
     };
 
