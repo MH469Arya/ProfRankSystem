@@ -129,9 +129,13 @@ VALUES (
 -- (3, 'DS Subject 1', 7),(3, 'DS Subject 2', 7),(3, 'DS Subject 3', 7),(3, 'DS Subject 4', 7),(3, 'DS Subject 5', 7),
 -- (3, 'DS Subject 1', 8),(3, 'DS Subject 2', 8),(3, 'DS Subject 3', 8),(3, 'DS Subject 4', 8),(3, 'DS Subject 5', 8);
 
+DROP TABLE IF EXISTS voting_results;
+DROP TABLE IF EXISTS voting_sessions;
+
 CREATE TABLE voting_sessions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     division VARCHAR(50) NOT NULL,
+    ts_snap JSON,
     start_time DATETIME NOT NULL,
     end_time DATETIME NOT NULL,
     max_votes INT DEFAULT 70,

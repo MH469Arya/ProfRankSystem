@@ -256,7 +256,9 @@ app.post("/api/change-password", authenticate, async (req, res) => {
   const { newPassword } = req.body;
 
   if (!newPassword || newPassword.length < 4) {
-    return res.status(400).json({ message: "Password must be at least 4 characters" });
+    return res
+      .status(400)
+      .json({ message: "Password must be at least 4 characters" });
   }
 
   try {
@@ -786,33 +788,65 @@ app.post("/api/voting-sessions", authenticate, (req, res) => {
   `;
 
   db.query(checkSql, (err, rows) => {
-    if (err) {
-      console.error(err);
-      return res.status(500).json({ message: "DB error" });
-    }
+    if (err) return res.status(500).json({ message: "DB error" });
 
     if (rows.length > 0) {
-      return res.status(409).json({
-        message: "Active session already exists",
-      });
+      return res.status(409).json({ message: "Active session already exists" });
     }
 
-    const insertSql = `
-      INSERT INTO voting_sessions
-      (division, start_time, end_time)
-      VALUES (?, NOW(), DATE_ADD(NOW(), INTERVAL 5 MINUTE))
+    // GET CURRENT CLASS LINKINGS
+    const snapshotSql = `
+      SELECT 
+        p.id AS teacher_id,
+        p.name AS teacher,
+        s.name AS subject
+      FROM class_linkings cl
+      JOIN classes c ON cl.class_id = c.id
+      JOIN proffs p ON cl.proff_id = p.id
+      JOIN subs s ON cl.sub_id = s.id
+      JOIN depts d ON c.dept_id = d.id
+      WHERE CONCAT(LOWER(d.code), '-', LOWER(c.year), '-', LOWER(c.division)) = ?
     `;
 
-    db.query(insertSql, [division], (err2, result) => {
+    db.query(snapshotSql, [division], (err2, rows2) => {
       if (err2) {
         console.error(err2);
-        return res.status(500).json({ message: "DB error" });
+        return res.status(500).json({ message: "Snapshot fetch error" });
       }
 
-      res.json({
-        session_id: result.insertId,
-        remaining_seconds: 300,
-      });
+      if (rows2.length === 0) {
+        return res.status(400).json({
+          message: "No teachers assigned to this class",
+        });
+      }
+
+      const snapshot = rows2.map((r) => ({
+        teacher_id: r.teacher_id,
+        teacher: r.teacher,
+        subject: r.subject,
+      }));
+
+      const insertSql = `
+        INSERT INTO voting_sessions
+        (division, ts_snap, start_time, end_time)
+        VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 5 MINUTE))
+      `;
+
+      db.query(
+        insertSql,
+        [division, JSON.stringify(snapshot)],
+        (err3, result) => {
+          if (err3) {
+            console.error(err3);
+            return res.status(500).json({ message: "DB error" });
+          }
+
+          res.json({
+            session_id: result.insertId,
+            remaining_seconds: 300,
+          });
+        },
+      );
     });
   });
 });
@@ -1091,34 +1125,39 @@ app.get("/api/voting-sessions/:id", (req, res) => {
   });
 });
 
-// to get teachers from proffs
+// to get proffs for votings
 app.get("/api/teachers", (req, res) => {
-  const { div } = req.query;
+  const { session } = req.query;
 
-  if (!div) return res.status(400).json({ message: "Division is required" });
+  if (!session) {
+    return res.status(400).json({ message: "Session id required" });
+  }
 
-  const deptCode = div.split("-")[0].toUpperCase();
+  const sql = "SELECT ts_snap FROM voting_sessions WHERE id = ? LIMIT 1";
 
-  db.execute(
-    `SELECT p.id, p.name 
-         FROM proffs p
-         INNER JOIN depts d ON p.dept_id = d.id
-         WHERE d.code = ?`,
-    [deptCode],
-    (err, results) => {
-      if (err) {
-        console.error("Database Error:", err.message);
-        return res.status(500).json({ message: "Internal server error" });
-      }
+  db.query(sql, [session], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
 
-      if (results.length === 0) {
-        return res.status(404).json({ message: "No teachers found" });
-      }
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Session not found" });
+    }
 
-      // Results is the array of teachers
-      res.json(results);
-    },
-  );
+    const snapshot =
+      typeof rows[0].ts_snap === "string"
+        ? JSON.parse(rows[0].ts_snap)
+        : rows[0].ts_snap;
+
+    const teachers = snapshot.map((t) => ({
+      id: t.teacher_id,
+      name: t.teacher,
+      subject: t.subject,
+    }));
+
+    res.json(teachers);
+  });
 });
 
 //get acadmeic years
@@ -1155,7 +1194,7 @@ app.get("/api/academic-years", (req, res) => {
   });
 });
 
-//borda
+// borda results
 app.get("/api/results", (req, res) => {
   const { department, year, division, academic_year } = req.query;
 
@@ -1165,118 +1204,103 @@ app.get("/api/results", (req, res) => {
 
   const fullDivision = `${department}-${year}-${division}`.toUpperCase();
 
-  // Get votes
-  db.query(
-    `SELECT vr.rankings
-      FROM voting_results vr
-      JOIN voting_sessions vs ON vr.session_id = vs.id
-      WHERE UPPER(vs.division) = UPPER(?)
-      AND (
-        CASE
-          WHEN MONTH(vr.submitted_at) >= 7
-            THEN CONCAT(YEAR(vr.submitted_at), '-', RIGHT(YEAR(vr.submitted_at)+1,2))
-          ELSE
-            CONCAT(YEAR(vr.submitted_at)-1, '-', RIGHT(YEAR(vr.submitted_at),2))
-        END
-      ) = ?
-    `,
-    [fullDivision, academic_year],
-    (err, voteResult) => {
-      if (err) {
-        console.error(err);
-        return res.status(500).json({ message: "Server Error" });
-      }
+  const voteSql = `
+    SELECT vr.rankings, vr.session_id
+    FROM voting_results vr
+    JOIN voting_sessions vs ON vr.session_id = vs.id
+    WHERE UPPER(vs.division) = UPPER(?)
+    AND (
+      CASE
+        WHEN MONTH(vr.submitted_at) >= 7
+          THEN CONCAT(YEAR(vr.submitted_at), '-', RIGHT(YEAR(vr.submitted_at)+1,2))
+        ELSE
+          CONCAT(YEAR(vr.submitted_at)-1, '-', RIGHT(YEAR(vr.submitted_at),2))
+      END
+    ) = ?
+  `;
 
-      const votes = voteResult;
-      const totalVotes = votes.length;
+  db.query(voteSql, [fullDivision, academic_year], (err, votes) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "Server Error" });
+    }
 
-      if (totalVotes === 0) {
-        return res.json({
-          rankings: [],
-          totalVotes: 0,
-        });
-      }
+    const totalVotes = votes.length;
 
-      const scoreMap = {};
-
-      votes.forEach((vote) => {
-        const rankingArray =
-          typeof vote.rankings === "string"
-            ? JSON.parse(vote.rankings)
-            : vote.rankings;
-
-        const totalTeachers = rankingArray.length;
-
-        rankingArray.forEach((teacherId, index) => {
-          const points = totalTeachers - index - 1;
-
-          if (!scoreMap[teacherId]) {
-            scoreMap[teacherId] = 0;
-          }
-
-          scoreMap[teacherId] += points;
-        });
+    if (totalVotes === 0) {
+      return res.json({
+        rankings: [],
+        totalVotes: 0,
       });
+    }
 
-      const sortedTeachers = Object.entries(scoreMap)
-        .map(([teacherId, score]) => ({
-          teacherId: parseInt(teacherId),
-          score,
-        }))
-        .sort((a, b) => b.score - a.score);
+    const sessionId = votes[0].session_id;
 
-      const teacherIds = sortedTeachers.map((t) => t.teacherId);
+    db.query(
+      "SELECT ts_snap FROM voting_sessions WHERE id = ?",
+      [sessionId],
+      (snapErr, snapRows) => {
+        if (snapErr) {
+          console.error(snapErr);
+          return res.status(500).json({ message: "Snapshot fetch error" });
+        }
 
-      if (teacherIds.length === 0) {
-        return res.json({
-          rankings: [],
+        const snapshot =
+          typeof snapRows[0].ts_snap === "string"
+            ? JSON.parse(snapRows[0].ts_snap)
+            : snapRows[0].ts_snap;
+
+        const snapshotMap = {};
+        snapshot.forEach((item) => {
+          snapshotMap[item.teacher_id] = item;
+        });
+
+        const scoreMap = {};
+
+        votes.forEach((vote) => {
+          const rankingArray =
+            typeof vote.rankings === "string"
+              ? JSON.parse(vote.rankings)
+              : vote.rankings;
+
+          const totalTeachers = rankingArray.length;
+
+          rankingArray.forEach((teacherId, index) => {
+            const points = totalTeachers - index - 1;
+
+            if (!scoreMap[teacherId]) {
+              scoreMap[teacherId] = 0;
+            }
+
+            scoreMap[teacherId] += points;
+          });
+        });
+
+        const sortedTeachers = Object.entries(scoreMap)
+          .map(([teacherId, score]) => ({
+            teacherId: parseInt(teacherId),
+            score,
+          }))
+          .sort((a, b) => b.score - a.score);
+
+        const finalRanking = sortedTeachers.map((teacher, index) => {
+          const snap = snapshotMap[teacher.teacherId];
+
+          return {
+            rank: index + 1,
+            teacher: snap?.teacher || "Unknown",
+            subject: snap?.subject || "Unknown",
+            score: teacher.score,
+          };
+        });
+
+        res.json({
+          rankings: finalRanking,
           totalVotes,
         });
-      }
-
-      const placeholders = teacherIds.map(() => "?").join(",");
-
-      // Get teacher details to show teacher name on ranking page
-      db.query(
-        `
-              SELECT p.id AS teacherId, p.name
-              FROM proffs p
-              JOIN depts d ON p.dept_id = d.id
-              WHERE p.id IN (${placeholders})
-              AND UPPER(d.code) = UPPER(?)
-              `,
-        [...teacherIds, department],
-        (err, teacherResult) => {
-          if (err) {
-            console.error(err);
-            return res.status(500).json({ message: "Server Error" });
-          }
-
-          const teacherMap = {};
-
-          teacherResult.forEach((t) => {
-            teacherMap[t.teacherId] = t;
-          });
-
-          const finalRanking = sortedTeachers.map((teacher, index) => {
-            const details = teacherMap[teacher.teacherId];
-
-            return {
-              rank: index + 1,
-              teacher: details?.name || "Unknown",
-              subject: "N/A",
-              score: teacher.score,
-            };
-          });
-
-          res.json({
-            rankings: finalRanking,
-            totalVotes,
-          });
-        },
-      );
-    },
-  );
+      },
+    );
+  });
 });
 
 //get classes for qr generation

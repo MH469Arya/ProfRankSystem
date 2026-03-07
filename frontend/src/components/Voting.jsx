@@ -12,7 +12,6 @@ export default function Voting() {
   console.log("Session ID:", sessionId);
   const [status, setStatus] = useState("loading"); // 'loading' | 'valid' | 'invalid' | 'expired' | 'submitted' | 'already_voted'
   const [remainingTime, setRemainingTime] = useState(0);
-  
 
   // Two lists state: available (bottom) and ranked (top)
   const [availableTeachers, setAvailableTeachers] = useState([]);
@@ -35,7 +34,9 @@ export default function Voting() {
           "Fetching session from:",
           `${API_BASE}/api/voting-sessions/${sessionId}`,
         );
-        const sessionRes = await fetch(`${API_BASE}/api/voting-sessions/${sessionId}`);
+        const sessionRes = await fetch(
+          `${API_BASE}/api/voting-sessions/${sessionId}`,
+        );
         console.log("Response status:", sessionRes.status);
         if (sessionRes.status === 403) {
           setStatus("expired");
@@ -94,7 +95,9 @@ export default function Voting() {
 
         setTitle(`Voting for ${dept} - ${classPart}`);
 
-        const response = await fetch(`${API_BASE}/api/teachers?div=${div}`);
+        const response = await fetch(
+          `${API_BASE}/api/teachers?session=${sessionId}`,
+        );
 
         if (!response.ok) {
           setStatus("invalid");

@@ -75,23 +75,23 @@ export default function RankingView() {
     }
   }, [divisions]);
 
+  const fetchAcademicYears = async () => {
+    if (!selectedDept || !selectedYear || !selectedDiv) return;
+
+    const res = await fetch(
+      `/api/academic-years?department=${selectedDept}&year=${selectedYear}&division=${selectedDiv}`,
+    );
+
+    const data = await res.json();
+
+    setAcademicYears(data);
+
+    if (data.length > 0 && !selectedAcademicYear) {
+      setSelectedAcademicYear(data[0]);
+    }
+  };
+
   useEffect(() => {
-    const fetchAcademicYears = async () => {
-      if (!selectedDept || !selectedYear || !selectedDiv) return;
-
-      const res = await fetch(
-        `/api/academic-years?department=${selectedDept}&year=${selectedYear}&division=${selectedDiv}`,
-      );
-
-      const data = await res.json();
-
-      setAcademicYears(data);
-
-      if (data.length > 0 && !selectedAcademicYear) {
-        setSelectedAcademicYear(data[0]);
-      }
-    };
-
     fetchAcademicYears();
   }, [selectedDept, selectedYear, selectedDiv]);
 
@@ -119,6 +119,17 @@ export default function RankingView() {
       setRankings([]);
       setTotalVotes(0);
     }
+  }, [selectedDept, selectedYear, selectedDiv, selectedAcademicYear]);
+
+  useEffect(() => {
+    if (!selectedDept || !selectedYear || !selectedDiv) return;
+
+    const interval = setInterval(() => {
+      fetchAcademicYears(); // check if first vote created academic year
+      fetchRankings(); // update rankings
+    }, 3000);
+
+    return () => clearInterval(interval);
   }, [selectedDept, selectedYear, selectedDiv, selectedAcademicYear]);
 
   return (
@@ -227,7 +238,7 @@ export default function RankingView() {
 
       {selectedDept && selectedYear && selectedDiv && (
         <div className="text-center mt-6 text-sm font-medium text-gray-600">
-          Number of students gave feedback: {totalVotes}
+          Number of students gave feedback: {totalVotes ?? 0}
         </div>
       )}
 

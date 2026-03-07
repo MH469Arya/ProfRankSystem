@@ -15,6 +15,7 @@ export default function QRGenerator() {
   const [sessionActive, setSessionActive] = useState(false);
   const [sessionId, setSessionId] = useState(null);
   const [activeSessionData, setActiveSessionData] = useState(null);
+  const [endTime, setEndTime] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -71,6 +72,7 @@ export default function QRGenerator() {
     }
 
     setTimeLeft(seconds);
+    setEndTime(Date.now() + seconds * 1000);
 
     const [deptCode, year, division] = session.division.split("-");
 
@@ -96,29 +98,49 @@ export default function QRGenerator() {
   );
   const classesByYear = groupClassesByYear(filteredClasses);
 
-  // Timer countdown
+  //timer
   useEffect(() => {
-    let interval;
-    if (sessionActive && timeLeft > 0) {
-      interval = setInterval(() => {
-        setTimeLeft((prev) => prev - 1);
-      }, 1000);
-    } else if (timeLeft <= 0) {
-      setSessionActive(false);
+    if (!sessionActive || !endTime) return;
 
-      if (sessionId) {
-        fetch(`/api/voting-sessions/${sessionId}/expire`, {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem("token")}`,
-          },
-        }).catch(() => {});
+    const interval = setInterval(() => {
+      const seconds = Math.floor((endTime - Date.now()) / 1000);
+
+      if (seconds <= 0) {
+        setTimeLeft(0);
+        setSessionActive(false);
+
+        if (sessionId) {
+          fetch(`/api/voting-sessions/${sessionId}/expire`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${localStorage.getItem("token")}`,
+            },
+          }).catch(() => {});
+        }
+
+        clearInterval(interval);
+      } else {
+        setTimeLeft(seconds);
       }
+    }, 1000);
 
-      setSessionId(null);
-    }
     return () => clearInterval(interval);
-  }, [sessionActive, timeLeft]);
+  }, [sessionActive, endTime]);
+
+  //timer correction
+  useEffect(() => {
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible" && endTime) {
+        const seconds = Math.floor((endTime - Date.now()) / 1000);
+        setTimeLeft(Math.max(0, seconds));
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility);
+  }, [endTime]);
 
   const handleGenerate = async () => {
     if (!dept || !classroom) return;
@@ -152,8 +174,13 @@ export default function QRGenerator() {
 
       const generatedUrl = `${window.location.origin}/v?session=${sessionId}`;
 
+      // setQrUrl(generatedUrl);
+      // setTimeLeft(data.remaining_seconds);
+      // setSessionActive(true);
+      // setSessionId(sessionId);
       setQrUrl(generatedUrl);
       setTimeLeft(data.remaining_seconds);
+      setEndTime(Date.now() + data.remaining_seconds * 1000);
       setSessionActive(true);
       setSessionId(sessionId);
     } catch (err) {
@@ -162,7 +189,6 @@ export default function QRGenerator() {
     } finally {
       setIsGenerating(false);
     }
-
   };
 
   const formatTime = (seconds) => {
@@ -272,7 +298,7 @@ export default function QRGenerator() {
         </div>
       )}
 
-      {timeLeft === 0 && !sessionActive && (
+      {sessionId && timeLeft === 0 && !sessionActive && (
         <p className="text-center text-sm text-gray-500 mt-4">
           Session expired. Generate a new QR code.
         </p>
