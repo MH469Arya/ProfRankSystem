@@ -23,7 +23,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS classes (
     id INT PRIMARY KEY AUTO_INCREMENT,
     dept_id INT,
-    year ENUM('SE', 'TE', 'BE'),
+    year ENUM('FE', 'SE', 'TE', 'BE'),
     division char(1),
 
     FOREIGN KEY (dept_id) REFERENCES depts(id) ON DELETE CASCADE,
