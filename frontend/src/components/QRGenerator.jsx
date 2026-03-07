@@ -5,13 +5,16 @@ import { Button } from "./ui/SharedComponents";
 export default function QRGenerator() {
   const [dept, setDept] = useState("");
   const [classroom, setClassroom] = useState("");
-  const [showQR, setShowQR] = useState(false);
   const [timeLeft, setTimeLeft] = useState(0);
   const [qrUrl, setQrUrl] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
 
   const [departments, setDepartments] = useState([]);
   const [classes, setClasses] = useState([]);
+
+  const [sessionActive, setSessionActive] = useState(false);
+  const [sessionId, setSessionId] = useState(null);
+  const [activeSessionData, setActiveSessionData] = useState(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -23,13 +26,23 @@ export default function QRGenerator() {
         setDepartments(deptData);
 
         const classRes = await fetch("/api/principal/classes", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { Authorization: `Bearer ${token}` },
         });
 
         const classData = await classRes.json();
         setClasses(Array.isArray(classData) ? classData : []);
+
+        // CHECK ACTIVE SESSION
+
+        const sessionRes = await fetch("/api/voting-sessions/active", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+
+        const sessionData = await sessionRes.json();
+
+        if (sessionData.active) {
+          setActiveSessionData(sessionData.session);
+        }
       } catch (err) {
         console.error("Failed to fetch data", err);
       }
@@ -37,6 +50,33 @@ export default function QRGenerator() {
 
     fetchData();
   }, []);
+
+  useEffect(() => {
+    if (!activeSessionData || classes.length === 0) return;
+
+    const session = activeSessionData;
+
+    setSessionActive(true);
+    setSessionId(session.id);
+
+    const generatedUrl = `${window.location.origin}/v?session=${session.id}`;
+
+    setQrUrl(generatedUrl);
+
+    const seconds = session.remaining_seconds;
+
+    if (seconds <= 0) {
+      setSessionActive(false);
+      return;
+    }
+
+    setTimeLeft(seconds);
+
+    const [deptCode, year, division] = session.division.split("-");
+
+    setDept(deptCode.toLowerCase());
+    setClassroom(`${year}-${division}`);
+  }, [activeSessionData, classes]);
 
   const groupClassesByYear = (classList) => {
     const groups = {};
@@ -51,44 +91,78 @@ export default function QRGenerator() {
     return groups;
   };
 
-  const filteredClasses = classes.filter((cls) => cls.dept === dept);
+  const filteredClasses = classes.filter(
+    (cls) => cls.dept.toLowerCase() === dept.toLowerCase(),
+  );
   const classesByYear = groupClassesByYear(filteredClasses);
 
   // Timer countdown
   useEffect(() => {
     let interval;
-    if (showQR && timeLeft > 0) {
+    if (sessionActive && timeLeft > 0) {
       interval = setInterval(() => {
         setTimeLeft((prev) => prev - 1);
       }, 1000);
-    } else if (timeLeft === 0) {
-      setShowQR(false);
+    } else if (timeLeft <= 0) {
+      setSessionActive(false);
+
+      if (sessionId) {
+        fetch(`/api/voting-sessions/${sessionId}/expire`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${localStorage.getItem("token")}`,
+          },
+        }).catch(() => {});
+      }
+
+      setSessionId(null);
     }
     return () => clearInterval(interval);
-  }, [showQR, timeLeft]);
+  }, [sessionActive, timeLeft]);
 
-  const handleGenerate = () => {
+  const handleGenerate = async () => {
     if (!dept || !classroom) return;
 
     setIsGenerating(true);
 
-    // Short fake delay to simulate generation
-    setTimeout(() => {
-      // Build divKey: aiml-se-a (remove '-' from classroom code like SE-A → se-a)
+    try {
+      const token = localStorage.getItem("token");
+
       const cleanClassroom = classroom.toLowerCase();
       const divKey = `${dept.toLowerCase()}-${cleanClassroom}`;
 
-      // Fake token with timestamp for expiration simulation
-      const fakeToken = `dev-${Date.now().toString(36).slice(-8)}`;
+      const res = await fetch("/api/voting-sessions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          division: divKey,
+        }),
+      });
 
-      // Final short URL
-      const generatedUrl = `${window.location.origin}/v?div=${divKey}&t=${fakeToken}`;
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message);
+      }
+
+      const data = await res.json();
+      const sessionId = data.session_id;
+
+      const generatedUrl = `${window.location.origin}/v?session=${sessionId}`;
 
       setQrUrl(generatedUrl);
-      setShowQR(true);
-      setTimeLeft(300); // 5 minutes
+      setTimeLeft(data.remaining_seconds);
+      setSessionActive(true);
+      setSessionId(sessionId);
+    } catch (err) {
+      alert(err.message);
+      console.error("QR session creation failed", err);
+    } finally {
       setIsGenerating(false);
-    }, 400);
+    }
+
   };
 
   const formatTime = (seconds) => {
@@ -111,15 +185,27 @@ export default function QRGenerator() {
           <select
             className="w-full p-2 border border-black rounded-none focus:outline-none focus:ring-1 focus:ring-black"
             value={dept}
+            disabled={sessionActive}
             onChange={(e) => {
-              setDept(e.target.value);
-              setClassroom(""); // reset classroom when dept changes
-              setShowQR(false);
+              const selectedDept = e.target.value.toLowerCase();
+
+              setDept(selectedDept);
+
+              const deptClasses = classes.filter(
+                (c) => c.dept.toLowerCase() === selectedDept,
+              );
+
+              if (deptClasses.length > 0) {
+                const first = deptClasses[0];
+                setClassroom(`${first.year}-${first.division}`);
+              } else {
+                setClassroom("");
+              }
             }}
           >
             <option value="">Select...</option>
             {departments.map((d) => (
-              <option key={d.id} value={d.code}>
+              <option key={d.id} value={d.code.toLowerCase()}>
                 {d.code.toUpperCase()}
               </option>
             ))}
@@ -135,8 +221,14 @@ export default function QRGenerator() {
             className="w-full p-2 border border-black rounded-none focus:outline-none focus:ring-1 focus:ring-black"
             value={classroom}
             onChange={(e) => setClassroom(e.target.value)}
-            disabled={!dept}
+            disabled={sessionActive || !dept || filteredClasses.length === 0}
           >
+            {!dept && <option value="">Select department first</option>}
+
+            {dept && filteredClasses.length === 0 && (
+              <option value="">No classes created</option>
+            )}
+
             {Object.entries(classesByYear).map(([year, clsList]) => (
               <optgroup key={year} label={year}>
                 {clsList.map((cls) => (
@@ -151,18 +243,18 @@ export default function QRGenerator() {
 
         <Button
           onClick={handleGenerate}
-          disabled={!dept || !classroom || showQR || isGenerating}
-          className={`w-full ${showQR || isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
+          disabled={!dept || !classroom || isGenerating || sessionActive}
+          className={`w-full ${sessionActive || isGenerating ? "opacity-50 cursor-not-allowed" : ""}`}
         >
           {isGenerating
             ? "Generating..."
-            : showQR
+            : sessionActive
               ? "Session Active"
               : "Generate QR Code (5 min)"}
         </Button>
       </div>
 
-      {showQR && timeLeft > 0 && (
+      {sessionActive && timeLeft > 0 && (
         <div className="flex flex-col items-center justify-center p-6 bg-gray-50 border border-gray-200">
           <QRCodeSVG
             value={qrUrl}
@@ -177,13 +269,10 @@ export default function QRGenerator() {
           <div className="mt-4 text-2xl font-bold font-mono text-black">
             Time Remaining: {formatTime(timeLeft)}
           </div>
-          <p className="text-xs text-red-600 font-bold mt-2 uppercase">
-            Do not refresh or share
-          </p>
         </div>
       )}
 
-      {timeLeft === 0 && showQR && (
+      {timeLeft === 0 && !sessionActive && (
         <p className="text-center text-sm text-gray-500 mt-4">
           Session expired. Generate a new QR code.
         </p>

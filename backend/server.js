@@ -7,16 +7,18 @@ const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 const authenticate = require("./middleware/auth");
 const { v4: uuidv4 } = require("uuid");
+const crypto = require("crypto");
 
 const app = express();
-/*app.use(cors({
-  origin: '*',                        // Allow any origin (including your mobile's IP-based origin)
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],  // Allow JSON body + auth if you use it later
-  credentials: true,                  // Allow cookies/sessions if you ever add them (harmless here)
-  preflightContinue: false,
-  optionsSuccessStatus: 204           // Some browsers need this for OPTIONS
-}));*/
+const cors = require("cors");
+
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  }),
+);
 app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 const db = mysql.createConnection({
@@ -26,16 +28,22 @@ const db = mysql.createConnection({
   database: process.env.DB_NAME,
 });
 
+function generatePassword() {
+  return crypto.randomBytes(2).toString("hex");
+}
 app.get("/", (req, res) => {
   res.send("Backend is running 🚀");
 });
 
 //login
 app.post("/api/login", (req, res) => {
-  const { email, password } = req.body;
+  const { username, password } = req.body;
 
-  if (!email || !password) {
-    return res.status(400).json({ message: "Email and password are required" });
+  console.log("LOGIN ATTEMPT:", username, password);
+  if (!username || !password) {
+    return res
+      .status(400)
+      .json({ message: "Username and password are required" });
   }
 
   const sql = `
@@ -46,7 +54,7 @@ app.post("/api/login", (req, res) => {
         LIMIT 1
     `;
 
-  db.query(sql, [email], async (err, results) => {
+  db.query(sql, [username], async (err, results) => {
     if (err) return res.status(500).json({ message: "DB error" });
 
     if (results.length === 0) {
@@ -55,7 +63,10 @@ app.post("/api/login", (req, res) => {
 
     const user = results[0];
 
+    console.log("DB HASH:", user.password_hash);
+
     const match = await bcrypt.compare(password, user.password_hash);
+    console.log("MATCH:", match);
     if (!match) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
@@ -79,37 +90,119 @@ app.post("/api/login", (req, res) => {
 
 // GET all departments
 app.get("/api/departments", (req, res) => {
-  const sql = "SELECT id, code FROM depts"; // Fetches ID and the code (which UI uses as name)
+  const sql = `
+    SELECT 
+      d.id,
+      d.code,
+      u.username
+    FROM depts d
+    LEFT JOIN users u 
+      ON u.dept_id = d.id AND u.role='DEPT_ADMIN'
+    ORDER BY d.code
+  `;
+
   db.query(sql, (err, results) => {
     if (err) {
       console.error("Error fetching departments:", err);
       return res.status(500).json({ message: "Database error" });
     }
+
     res.json(results);
   });
 });
 
 // POST to add or update a department
 app.post("/api/departments", (req, res) => {
-  const { id, name } = req.body; // 'name' from frontend maps to 'code' in DB
+  const { id, name, username } = req.body; // 'name' from frontend maps to 'code' in DB
 
   if (id) {
-    // UPDATE existing department
-    const sql = "UPDATE depts SET code = ? WHERE id = ?";
-    db.query(sql, [name, id], (err, result) => {
-      if (err) return res.status(500).json({ message: "Update failed" });
-      res.json({ message: "Department updated successfully" });
-    });
-  } else {
-    // INSERT new department
-    const sql = "INSERT INTO depts (code) VALUES (?)";
-    db.query(sql, [name], (err, result) => {
-      if (err) return res.status(500).json({ message: "Insert failed" });
-      res.json({
-        message: "Department added successfully",
-        id: result.insertId,
+    const updateDept = "UPDATE depts SET code = ? WHERE id = ?";
+
+    db.query(updateDept, [name, id], (err) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Department update failed" });
+      }
+
+      const updateUser = `
+      UPDATE users
+      SET username = ?
+      WHERE dept_id = ? AND role = 'DEPT_ADMIN'
+    `;
+
+      db.query(updateUser, [username, id], (err2) => {
+        if (err2) {
+          if (err2.code === "ER_DUP_ENTRY") {
+            return res.status(409).json({
+              message: "Username already exists",
+            });
+          }
+
+          console.error(err2);
+          return res.status(500).json({
+            message: "Username update failed",
+          });
+        }
+
+        res.json({
+          message: "Department updated successfully",
+        });
       });
     });
+  } else {
+    if (!username) {
+      return res.status(400).json({ message: "Username required" });
+    }
+
+    try {
+      const insertDept = "INSERT INTO depts (code) VALUES (UPPER(?))";
+
+      db.query(insertDept, [name], async (err, result) => {
+        if (err) {
+          console.error(err);
+          return res
+            .status(500)
+            .json({ message: "Department creation failed" });
+        }
+
+        const deptId = result.insertId;
+
+        // generate random temporary password
+        const tempPassword = generatePassword();
+
+        // hash password
+        const hash = await bcrypt.hash(tempPassword, 10);
+
+        const insertUser = `
+        INSERT INTO users (username,password_hash,role,dept_id)
+        VALUES (?,?, 'DEPT_ADMIN', ?)
+      `;
+
+        db.query(insertUser, [username, hash, deptId], (err2) => {
+          if (err2) {
+            if (err2.code === "ER_DUP_ENTRY") {
+              return res.status(409).json({
+                message: "Username already exists",
+              });
+            }
+
+            console.error(err2);
+            return res.status(500).json({
+              message: "User creation failed",
+            });
+          }
+
+          res.json({
+            message: "Department and HOD created",
+            username,
+            tempPassword,
+          });
+        });
+      });
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ message: "Server error" });
+    }
   }
 });
 
@@ -125,6 +218,74 @@ app.delete("/api/departments/:id", (req, res) => {
     }
     res.json({ message: "Deleted successfully" });
   });
+});
+
+//reset password HOD
+app.post("/api/departments/:id/reset-password", async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const tempPassword = generatePassword();
+    const hash = await bcrypt.hash(tempPassword, 10);
+
+    const sql = `
+      UPDATE users
+      SET password_hash = ?
+      WHERE dept_id = ? AND role='DEPT_ADMIN'
+    `;
+
+    db.query(sql, [hash, id], (err, result) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ message: "DB error" });
+      }
+
+      res.json({
+        message: "Password reset successful",
+        tempPassword,
+      });
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+//change password
+app.post("/api/change-password", authenticate, async (req, res) => {
+  const { newPassword } = req.body;
+
+  if (!newPassword || newPassword.length < 4) {
+    return res.status(400).json({ message: "Password must be at least 4 characters" });
+  }
+
+  try {
+    const hash = await bcrypt.hash(newPassword, 10);
+
+    const sql = `
+      UPDATE users
+      SET password_hash = ?
+      WHERE role = ?
+      ${req.user.role === "DEPT_ADMIN" ? "AND dept_id = (SELECT id FROM depts WHERE code = ?)" : ""}
+    `;
+
+    const params =
+      req.user.role === "DEPT_ADMIN"
+        ? [hash, req.user.role, req.user.dept]
+        : [hash, req.user.role];
+
+    db.query(sql, params, (err) => {
+      if (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Password update failed" });
+      }
+
+      res.json({ message: "Password updated successfully" });
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 //fetch deartment subs
@@ -604,64 +765,329 @@ app.delete("/api/linkings/:id", authenticate, (req, res) => {
   });
 });
 
-//after voting storing of student responses
-app.post("/api/vote", (req, res) => {
-  const { class_session, division, rankings } = req.body;
+// CREATE voting session (QR generation)
+app.post("/api/voting-sessions", authenticate, (req, res) => {
+  const { role } = req.user;
+  const { division } = req.body;
 
-  if (!class_session || !division || !rankings) {
+  if (role !== "SUPER_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  if (!division) {
+    return res.status(400).json({ message: "Division required" });
+  }
+
+  const checkSql = `
+    SELECT id FROM voting_sessions
+    WHERE is_active = TRUE
+    AND end_time > NOW()
+    LIMIT 1
+  `;
+
+  db.query(checkSql, (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (rows.length > 0) {
+      return res.status(409).json({
+        message: "Active session already exists",
+      });
+    }
+
+    const insertSql = `
+      INSERT INTO voting_sessions
+      (division, start_time, end_time)
+      VALUES (?, NOW(), DATE_ADD(NOW(), INTERVAL 5 MINUTE))
+    `;
+
+    db.query(insertSql, [division], (err2, result) => {
+      if (err2) {
+        console.error(err2);
+        return res.status(500).json({ message: "DB error" });
+      }
+
+      res.json({
+        session_id: result.insertId,
+        remaining_seconds: 300,
+      });
+    });
+  });
+});
+
+app.post("/api/voting-sessions/:id/expire", authenticate, (req, res) => {
+  const { role } = req.user;
+  const { id } = req.params;
+
+  if (role !== "SUPER_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  const sql = `
+    UPDATE voting_sessions
+    SET is_active = FALSE
+    WHERE id = ? AND is_active = TRUE
+  `;
+
+  db.query(sql, [id], (err) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    res.json({ message: "Session expired" });
+  });
+});
+
+app.post("/api/vote", async (req, res) => {
+  const { class_session, rankings, fingerprint } = req.body;
+
+  if (!class_session || !rankings || !fingerprint) {
     return res.status(400).json({ message: "Missing voting data" });
   }
 
-  // Generate UUID for this anonymous student
-  const voteSessionId = uuidv4();
+  const sessionId = class_session;
 
-  const sql = `
-        INSERT INTO voting_results 
-        (class_session, vote_session_id, division, rankings) 
-        VALUES (?, ?, ?, ?)
+  const voteSessionId = uuidv4();
+  const deviceHash = crypto
+    .createHash("sha256")
+    .update(fingerprint)
+    .digest("hex");
+
+  // const checkSql = `
+  //   SELECT *
+  //   FROM voting_sessions
+  //   WHERE id = ?
+  //   LIMIT 1
+  // `;
+
+  const checkSql = `SELECT *,
+      TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+      FROM voting_sessions
+      WHERE id = ?
+      LIMIT 1
     `;
 
-  db.execute(
-    sql,
-    [class_session, voteSessionId, division, JSON.stringify(rankings)],
-    (err, result) => {
-      if (err) {
-        console.error("Insertion Error:", err.message);
-        return res
-          .status(500)
-          .json({ message: "Database error during voting" });
+  db.query(checkSql, [sessionId], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Voting session not found" });
+    }
+
+    const session = results[0];
+
+    // Check active
+    if (!session.is_active) {
+      return res.status(403).json({ message: "Voting session closed" });
+    }
+
+    // Check expiry
+    if (session.remaining_seconds <= 0) {
+      db.query("UPDATE voting_sessions SET is_active = FALSE WHERE id = ?", [
+        sessionId,
+      ]);
+
+      return res.status(403).json({ message: "Voting session expired" });
+    }
+
+    // Check vote limit
+    if (session.votes_cast >= session.max_votes) {
+      db.query("UPDATE voting_sessions SET is_active = FALSE WHERE id = ?", [
+        sessionId,
+      ]);
+
+      return res.status(403).json({ message: "Maximum votes reached" });
+    }
+
+    const duplicateCheck = `SELECT id
+          FROM voting_results
+          WHERE session_id = ?
+          AND device_hash = ?
+          LIMIT 1
+            `;
+
+    db.query(duplicateCheck, [sessionId, deviceHash], (err2, rows) => {
+      if (err2) {
+        return res.status(500).json({ message: "DB error" });
       }
 
-      res
-        .status(200)
-        .json({
-          message: "Vote cast successfully",
-          vote_session_id: voteSessionId,
+      if (rows.length > 0) {
+        return res.status(403).json({
+          message: "Device already voted",
         });
-    },
-  );
+      }
+
+      const insertSql = `
+          INSERT INTO voting_results
+          (session_id, vote_session_id, device_hash, rankings)
+          VALUES (?, ?, ?, ?)
+        `;
+
+      db.query(
+        insertSql,
+        [sessionId, voteSessionId, deviceHash, JSON.stringify(rankings)],
+        (err3) => {
+          if (err3) {
+            console.error(err3);
+            return res
+              .status(500)
+              .json({ message: "Database error during voting" });
+          }
+
+          const updateSql = `
+          UPDATE voting_sessions
+          SET votes_cast = votes_cast + 1
+          WHERE id = ?
+        `;
+
+          db.query(updateSql, [sessionId]);
+
+          res.json({
+            message: "Vote cast successfully",
+            vote_session_id: voteSessionId,
+          });
+        },
+      );
+    });
+  });
+});
+
+//fetch active qr sessions
+app.get("/api/voting-sessions/active", authenticate, (req, res) => {
+  const { role } = req.user;
+
+  if (role !== "SUPER_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  const sql = `SELECT *,
+        TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+        FROM voting_sessions
+        WHERE is_active = TRUE
+        AND end_time > NOW()
+        ORDER BY start_time DESC
+        LIMIT 1
+      `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (results.length === 0) {
+      return res.json({ active: false });
+    }
+
+    res.json({
+      active: true,
+      session: results[0],
+    });
+  });
 });
 
 app.post("/api/check_vote", (req, res) => {
-  const { vote_session_id, class_session } = req.body;
+  const { vote_session_id, session_id } = req.body;
 
-  if (!vote_session_id || !class_session) {
+  if (!vote_session_id || !session_id) {
     return res.status(400).json({ message: "Missing session details" });
   }
 
   const sql = `
-        SELECT id FROM voting_results 
-        WHERE vote_session_id = ? AND class_session = ?
-        LIMIT 1
-    `;
+    SELECT id
+    FROM voting_results
+    WHERE vote_session_id = ?
+    AND session_id = ?
+    LIMIT 1
+  `;
 
-  db.query(sql, [vote_session_id, class_session], (err, results) => {
+  db.query(sql, [vote_session_id, session_id], (err, results) => {
     if (err) {
       console.error("Check Vote Error:", err.message);
       return res.status(500).json({ message: "DB error checking vote" });
     }
 
-    res.json({ has_voted: results.length > 0 });
+    res.json({
+      has_voted: results.length > 0,
+    });
+  });
+});
+
+//check device hash
+app.post("/api/check_device", (req, res) => {
+  const { session_id, fingerprint } = req.body;
+
+  if (!session_id || !fingerprint) {
+    return res.status(400).json({ message: "Missing data" });
+  }
+
+  const deviceHash = crypto
+    .createHash("sha256")
+    .update(fingerprint)
+    .digest("hex");
+
+  const sql = `
+    SELECT id
+    FROM voting_results
+    WHERE session_id = ?
+    AND device_hash = ?
+    LIMIT 1
+  `;
+
+  db.query(sql, [session_id, deviceHash], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    res.json({
+      already_voted: rows.length > 0,
+    });
+  });
+});
+
+//get session details
+app.get("/api/voting-sessions/:id", (req, res) => {
+  console.log("SESSION FETCH HIT", req.params.id);
+  const { id } = req.params;
+
+  const sql = `
+    SELECT *,
+    TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+    FROM voting_sessions
+    WHERE id = ?
+    LIMIT 1
+  `;
+
+  db.query(sql, [id], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (results.length === 0) {
+      console.log("SESSION NOT FOUND");
+      return res.status(404).json({ message: "Session not found" });
+    }
+
+    const session = results[0];
+    console.log("SESSION ACTIVE FLAG:", session.is_active);
+    console.log("SESSION END TIME:", session.end_time);
+    console.log("REMAINING SECONDS:", session.remaining_seconds);
+
+    // THE ONLY CHECK
+    if (!session.is_active) {
+      console.log("SESSION MARKED INACTIVE");
+      return res.status(403).json({ message: "Session expired" });
+    }
+
+    console.log("SESSION VALID");
+    res.json(session);
   });
 });
 
@@ -695,20 +1121,66 @@ app.get("/api/teachers", (req, res) => {
   );
 });
 
-//borda
-app.get("/api/results", (req, res) => {
+//get acadmeic years
+app.get("/api/academic-years", (req, res) => {
   const { department, year, division } = req.query;
 
   if (!department || !year || !division) {
     return res.status(400).json({ message: "Missing filters" });
   }
 
-  const fullDivision = `${department}-${year}${division}`.toUpperCase();
+  const fullDivision = `${department}-${year}-${division}`.toUpperCase();
+
+  const sql = `
+    SELECT DISTINCT
+    CASE
+      WHEN MONTH(vr.submitted_at) >= 7
+        THEN CONCAT(YEAR(vr.submitted_at), '-', RIGHT(YEAR(vr.submitted_at)+1,2))
+      ELSE
+        CONCAT(YEAR(vr.submitted_at)-1, '-', RIGHT(YEAR(vr.submitted_at),2))
+    END AS academic_year
+    FROM voting_results vr
+    JOIN voting_sessions vs ON vr.session_id = vs.id
+    WHERE UPPER(vs.division) = UPPER(?)
+    ORDER BY academic_year DESC
+  `;
+
+  db.query(sql, [fullDivision], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    res.json(results.map((r) => r.academic_year));
+  });
+});
+
+//borda
+app.get("/api/results", (req, res) => {
+  const { department, year, division, academic_year } = req.query;
+
+  if (!department || !year || !division || !academic_year) {
+    return res.status(400).json({ message: "Missing filters" });
+  }
+
+  const fullDivision = `${department}-${year}-${division}`.toUpperCase();
 
   // Get votes
   db.query(
-    "SELECT rankings FROM voting_results WHERE division = ?",
-    [fullDivision],
+    `SELECT vr.rankings
+      FROM voting_results vr
+      JOIN voting_sessions vs ON vr.session_id = vs.id
+      WHERE UPPER(vs.division) = UPPER(?)
+      AND (
+        CASE
+          WHEN MONTH(vr.submitted_at) >= 7
+            THEN CONCAT(YEAR(vr.submitted_at), '-', RIGHT(YEAR(vr.submitted_at)+1,2))
+          ELSE
+            CONCAT(YEAR(vr.submitted_at)-1, '-', RIGHT(YEAR(vr.submitted_at),2))
+        END
+      ) = ?
+    `,
+    [fullDivision, academic_year],
     (err, voteResult) => {
       if (err) {
         console.error(err);
@@ -837,6 +1309,20 @@ app.get("/api/principal/classes", authenticate, (req, res) => {
   });
 });
 
+//auto clean sessions every 30 seconds
+setInterval(() => {
+  const sql = `
+    UPDATE voting_sessions
+    SET is_active = FALSE
+    WHERE is_active = TRUE
+    AND end_time < NOW()
+  `;
+
+  db.query(sql, (err, result) => {
+    if (err) console.error("Session cleanup error:", err);
+    else console.log("Sessions expired:", result.affectedRows);
+  });
+}, 5000); // every 30 seconds
 
 app.listen(5000, "0.0.0.0", () =>
   console.log("Server running on http://localhost:5000"),
