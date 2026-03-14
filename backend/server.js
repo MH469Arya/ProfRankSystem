@@ -623,6 +623,505 @@ app.post('/api/vote', (req, res) => {
             if (existing.length > 0) {
                 return res.status(403).json({ message: "You have already voted!" });
             }
+    // GET CURRENT CLASS LINKINGS
+    const snapshotSql = `
+      SELECT 
+        p.id AS teacher_id,
+        p.name AS teacher,
+        s.name AS subject
+      FROM class_linkings cl
+      JOIN classes c ON cl.class_id = c.id
+      JOIN proffs p ON cl.proff_id = p.id
+      JOIN subs s ON cl.sub_id = s.id
+      JOIN depts d ON c.dept_id = d.id
+      WHERE CONCAT(LOWER(d.code), '-', LOWER(c.year), '-', LOWER(c.division)) = ?
+    `;
+
+    db.query(snapshotSql, [division], (err2, rows2) => {
+      if (err2) {
+        console.error(err2);
+        return res.status(500).json({ message: "Snapshot fetch error" });
+      }
+
+      if (rows2.length === 0) {
+        return res.status(400).json({
+          message: "No teachers assigned to this class",
+        });
+      }
+
+      const snapshot = rows2.map((r) => ({
+        teacher_id: r.teacher_id,
+        teacher: r.teacher,
+        subject: r.subject,
+      }));
+
+      const insertSql = `
+        INSERT INTO voting_sessions
+        (division, ts_snap, start_time, end_time)
+        VALUES (?, ?, NOW(), DATE_ADD(NOW(), INTERVAL 5 MINUTE))
+      `;
+
+      db.query(
+        insertSql,
+        [division, JSON.stringify(snapshot)],
+        (err3, result) => {
+          if (err3) {
+            console.error(err3);
+            return res.status(500).json({ message: "DB error" });
+          }
+
+          res.json({
+            session_id: result.insertId,
+            remaining_seconds: 300,
+          });
+        },
+      );
+    });
+  });
+});
+
+app.post("/api/voting-sessions/:id/expire", authenticate, (req, res) => {
+  const { role } = req.user;
+  const { id } = req.params;
+
+  if (role !== "SUPER_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  const sql = `
+    UPDATE voting_sessions
+    SET is_active = FALSE
+    WHERE id = ? AND is_active = TRUE
+  `;
+
+  db.query(sql, [id], (err) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    res.json({ message: "Session expired" });
+  });
+});
+
+app.post("/api/vote", async (req, res) => {
+  const { class_session, rankings, fingerprint } = req.body;
+
+  if (!class_session || !rankings || !fingerprint) {
+    return res.status(400).json({ message: "Missing voting data" });
+  }
+
+  const sessionId = class_session;
+
+  const voteSessionId = uuidv4();
+  const deviceHash = crypto
+    .createHash("sha256")
+    .update(fingerprint)
+    .digest("hex");
+
+  // const checkSql = `
+  //   SELECT *
+  //   FROM voting_sessions
+  //   WHERE id = ?
+  //   LIMIT 1
+  // `;
+
+  const checkSql = `SELECT *,
+      TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+      FROM voting_sessions
+      WHERE id = ?
+      LIMIT 1
+    `;
+
+  db.query(checkSql, [sessionId], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (results.length === 0) {
+      return res.status(404).json({ message: "Voting session not found" });
+    }
+
+    const session = results[0];
+
+    // Check active
+    if (!session.is_active) {
+      return res.status(403).json({ message: "Voting session closed" });
+    }
+
+    // Check expiry
+    if (session.remaining_seconds <= 0) {
+      db.query("UPDATE voting_sessions SET is_active = FALSE WHERE id = ?", [
+        sessionId,
+      ]);
+
+      return res.status(403).json({ message: "Voting session expired" });
+    }
+
+    // Check vote limit
+    if (session.votes_cast >= session.max_votes) {
+      db.query("UPDATE voting_sessions SET is_active = FALSE WHERE id = ?", [
+        sessionId,
+      ]);
+
+      return res.status(403).json({ message: "Maximum votes reached" });
+    }
+
+    const duplicateCheck = `SELECT id
+          FROM voting_results
+          WHERE session_id = ?
+          AND device_hash = ?
+          LIMIT 1
+            `;
+
+    db.query(duplicateCheck, [sessionId, deviceHash], (err2, rows) => {
+      if (err2) {
+        return res.status(500).json({ message: "DB error" });
+      }
+
+      if (rows.length > 0) {
+        return res.status(403).json({
+          message: "Device already voted",
+        });
+      }
+
+      const insertSql = `
+          INSERT INTO voting_results
+          (session_id, vote_session_id, device_hash, rankings)
+          VALUES (?, ?, ?, ?)
+        `;
+
+      db.query(
+        insertSql,
+        [sessionId, voteSessionId, deviceHash, JSON.stringify(rankings)],
+        (err3) => {
+          if (err3) {
+            console.error(err3);
+            return res
+              .status(500)
+              .json({ message: "Database error during voting" });
+          }
+
+          const updateSql = `
+          UPDATE voting_sessions
+          SET votes_cast = votes_cast + 1
+          WHERE id = ?
+        `;
+
+          db.query(updateSql, [sessionId]);
+
+          res.json({
+            message: "Vote cast successfully",
+            vote_session_id: voteSessionId,
+          });
+        },
+      );
+    });
+  });
+});
+
+//fetch active qr sessions
+app.get("/api/voting-sessions/active", authenticate, (req, res) => {
+  const { role } = req.user;
+
+  if (role !== "SUPER_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  const sql = `SELECT *,
+        TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+        FROM voting_sessions
+        WHERE is_active = TRUE
+        AND end_time > NOW()
+        ORDER BY start_time DESC
+        LIMIT 1
+      `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (results.length === 0) {
+      return res.json({ active: false });
+    }
+
+    res.json({
+      active: true,
+      session: results[0],
+    });
+  });
+});
+
+app.post("/api/check_vote", (req, res) => {
+  const { vote_session_id, session_id } = req.body;
+
+  if (!vote_session_id || !session_id) {
+    return res.status(400).json({ message: "Missing session details" });
+  }
+
+  const sql = `
+    SELECT id
+    FROM voting_results
+    WHERE vote_session_id = ?
+    AND session_id = ?
+    LIMIT 1
+  `;
+
+  db.query(sql, [vote_session_id, session_id], (err, results) => {
+    if (err) {
+      console.error("Check Vote Error:", err.message);
+      return res.status(500).json({ message: "DB error checking vote" });
+    }
+
+    res.json({
+      has_voted: results.length > 0,
+    });
+  });
+});
+
+//check device hash
+app.post("/api/check_device", (req, res) => {
+  const { session_id, fingerprint } = req.body;
+
+  if (!session_id || !fingerprint) {
+    return res.status(400).json({ message: "Missing data" });
+  }
+
+  const deviceHash = crypto
+    .createHash("sha256")
+    .update(fingerprint)
+    .digest("hex");
+
+  const sql = `
+    SELECT id
+    FROM voting_results
+    WHERE session_id = ?
+    AND device_hash = ?
+    LIMIT 1
+  `;
+
+  db.query(sql, [session_id, deviceHash], (err, rows) => {
+    if (err) {
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    res.json({
+      already_voted: rows.length > 0,
+    });
+  });
+});
+
+//get session details
+app.get("/api/voting-sessions/:id", (req, res) => {
+  console.log("SESSION FETCH HIT", req.params.id);
+  const { id } = req.params;
+
+  const sql = `
+    SELECT *,
+    TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+    FROM voting_sessions
+    WHERE id = ?
+    LIMIT 1
+  `;
+
+  db.query(sql, [id], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (results.length === 0) {
+      console.log("SESSION NOT FOUND");
+      return res.status(404).json({ message: "Session not found" });
+    }
+
+    const session = results[0];
+    console.log("SESSION ACTIVE FLAG:", session.is_active);
+    console.log("SESSION END TIME:", session.end_time);
+    console.log("REMAINING SECONDS:", session.remaining_seconds);
+
+    // THE ONLY CHECK
+    if (!session.is_active) {
+      console.log("SESSION MARKED INACTIVE");
+      return res.status(403).json({ message: "Session expired" });
+    }
+
+    console.log("SESSION VALID");
+    res.json(session);
+  });
+});
+
+// to get proffs for votings
+app.get("/api/teachers", (req, res) => {
+  const { session } = req.query;
+
+  if (!session) {
+    return res.status(400).json({ message: "Session id required" });
+  }
+
+  const sql = "SELECT ts_snap FROM voting_sessions WHERE id = ? LIMIT 1";
+
+  db.query(sql, [session], (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Session not found" });
+    }
+
+    const snapshot =
+      typeof rows[0].ts_snap === "string"
+        ? JSON.parse(rows[0].ts_snap)
+        : rows[0].ts_snap;
+
+    const teachers = snapshot.map((t) => ({
+      id: t.teacher_id,
+      name: t.teacher,
+      subject: t.subject,
+    }));
+
+    res.json(teachers);
+  });
+});
+
+//get acadmeic years
+app.get("/api/academic-years", (req, res) => {
+  const { department, year, division } = req.query;
+
+  if (!department || !year || !division) {
+    return res.status(400).json({ message: "Missing filters" });
+  }
+
+  const fullDivision = `${department}-${year}-${division}`.toUpperCase();
+
+  const sql = `
+    SELECT DISTINCT
+    CASE
+      WHEN MONTH(vr.submitted_at) >= 7
+        THEN CONCAT(YEAR(vr.submitted_at), '-', RIGHT(YEAR(vr.submitted_at)+1,2))
+      ELSE
+        CONCAT(YEAR(vr.submitted_at)-1, '-', RIGHT(YEAR(vr.submitted_at),2))
+    END AS academic_year
+    FROM voting_results vr
+    JOIN voting_sessions vs ON vr.session_id = vs.id
+    WHERE UPPER(vs.division) = UPPER(?)
+    ORDER BY academic_year DESC
+  `;
+
+  db.query(sql, [fullDivision], (err, results) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    res.json(results.map((r) => r.academic_year));
+  });
+});
+
+// borda results
+app.get("/api/results", (req, res) => {
+  const { department, year, division, academic_year } = req.query;
+
+  if (!department || !year || !division || !academic_year) {
+    return res.status(400).json({ message: "Missing filters" });
+  }
+
+  const fullDivision = `${department}-${year}-${division}`.toUpperCase();
+
+  const voteSql = `
+    SELECT vr.rankings, vr.session_id
+    FROM voting_results vr
+    JOIN voting_sessions vs ON vr.session_id = vs.id
+    WHERE UPPER(vs.division) = UPPER(?)
+    AND (
+      CASE
+        WHEN MONTH(vr.submitted_at) >= 7
+          THEN CONCAT(YEAR(vr.submitted_at), '-', RIGHT(YEAR(vr.submitted_at)+1,2))
+        ELSE
+          CONCAT(YEAR(vr.submitted_at)-1, '-', RIGHT(YEAR(vr.submitted_at),2))
+      END
+    ) = ?
+  `;
+
+  db.query(voteSql, [fullDivision, academic_year], (err, votes) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "Server Error" });
+    }
+
+    const totalVotes = votes.length;
+
+    if (totalVotes === 0) {
+      return res.json({
+        rankings: [],
+        totalVotes: 0,
+      });
+    }
+
+    const sessionId = votes[0].session_id;
+
+    db.query(
+      "SELECT ts_snap FROM voting_sessions WHERE id = ?",
+      [sessionId],
+      (snapErr, snapRows) => {
+        if (snapErr) {
+          console.error(snapErr);
+          return res.status(500).json({ message: "Snapshot fetch error" });
+        }
+
+        const snapshot =
+          typeof snapRows[0].ts_snap === "string"
+            ? JSON.parse(snapRows[0].ts_snap)
+            : snapRows[0].ts_snap;
+
+        const snapshotMap = {};
+        snapshot.forEach((item) => {
+          snapshotMap[item.teacher_id] = item;
+        });
+
+        const scoreMap = {};
+        const distributionMap = {};
+
+        votes.forEach((vote) => {
+          const rankingArray =
+            typeof vote.rankings === "string"
+              ? JSON.parse(vote.rankings)
+              : vote.rankings;
+
+          const totalTeachers = rankingArray.length;
+
+          rankingArray.forEach((teacherId, index) => {
+            const points = totalTeachers - index - 1;
+
+            if (!scoreMap[teacherId]) {
+              scoreMap[teacherId] = 0;
+            }
+            scoreMap[teacherId] += points;
+
+            // Track distribution
+            if (!distributionMap[teacherId]) {
+              distributionMap[teacherId] = {
+                1: 0,
+                2: 0,
+                3: 0,
+                4: 0,
+                "5plus": 0,
+              };
+            }
+
+            const rank = index + 1;
+            if (rank <= 4) {
+              distributionMap[teacherId][rank]++;
+            } else {
+              distributionMap[teacherId]["5plus"]++;
+            }
+          });
+        });
 
             // 3. Insert the vote 
             const sql = 'INSERT INTO voting_results (student_token, division, rankings) VALUES (?, ?, ?)';
@@ -668,6 +1167,24 @@ app.get('/api/teachers', (req, res) => {
             // Results is the array of teachers
             res.json(results);
         }
+        const finalRanking = sortedTeachers.map((teacher, index) => {
+          const snap = snapshotMap[teacher.teacherId];
+          const dist = distributionMap[teacher.teacherId];
+
+          return {
+            rank: index + 1,
+            teacher: snap?.teacher || "Unknown",
+            subject: snap?.subject || "Unknown",
+            score: teacher.score,
+            distribution: dist || { 1: 0, 2: 0, 3: 0, 4: 0, "5plus": 0 },
+          };
+        });
+
+        res.json({
+          rankings: finalRanking,
+          totalVotes,
+        });
+      },
     );
 });
 

@@ -15,6 +15,7 @@ export default function DivisionManager() {
   const [assignmentForm, setAssignmentForm] = useState({
     sub_id: "",
     proff_id: "",
+    academic_year: "",
   });
   const [editingAssignmentId, setEditingAssignmentId] = useState(null);
 
@@ -146,15 +147,22 @@ export default function DivisionManager() {
   const closeAssignmentModal = () => {
     setIsAssignmentModalOpen(false);
     setSelectedClassroom(null);
-    setAssignmentForm({ sub_id: "", proff_id: "" });
+    setAssignmentForm({ sub_id: "", proff_id: "", academic_year: "" });
   };
 
   const handleAssignmentSubmit = async (e) => {
     e.preventDefault();
-    if (!assignmentForm.sub_id || !assignmentForm.proff_id) {
-      alert("Please select both subject and professor");
+    if (!assignmentForm.sub_id || !assignmentForm.proff_id || !assignmentForm.academic_year) {
+      alert("Please select subject, professor and academic year");
       return;
     }
+
+    const academicYearRegex = /^\d{4}-\d{2}$/;
+    if (!academicYearRegex.test(assignmentForm.academic_year)) {
+      alert("Academic Year must be in format YYYY-YY (e.g. 2025-26)");
+      return;
+    }
+
     const token = localStorage.getItem("token");
 
     if (editingAssignmentId) {
@@ -164,7 +172,10 @@ export default function DivisionManager() {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ proff_id: assignmentForm.proff_id }),
+        body: JSON.stringify({ 
+          proff_id: assignmentForm.proff_id,
+          academic_year: assignmentForm.academic_year 
+        }),
       });
     } else {
       await fetch(
@@ -182,7 +193,7 @@ export default function DivisionManager() {
 
     openAssignmentModal(selectedClassroom);
     setEditingAssignmentId(null);
-    setAssignmentForm({ sub_id: "", proff_id: "" });
+    setAssignmentForm({ sub_id: "", proff_id: "", academic_year: "" });
     setEditingSubjectName("");
   };
 
@@ -190,6 +201,7 @@ export default function DivisionManager() {
     setAssignmentForm({
       sub_id: assignment.sub_id,
       proff_id: assignment.proff_id,
+      academic_year: assignment.academic_year || "",
     });
     setEditingSubjectName(assignment.subject);
     setEditingAssignmentId(assignment.id);
@@ -339,12 +351,12 @@ export default function DivisionManager() {
                         key={a.id}
                         className="flex justify-between items-center bg-gray-50 p-3 border border-gray-100 hover:border-gray-300 transition-colors"
                       >
-                        <div>
-                          <div className="font-bold text-sm">{a.subject}</div>
-                          <div className="text-xs text-gray-600">
-                            {a.teacher}
+                          <div>
+                            <div className="font-bold text-sm">{a.subject}</div>
+                            <div className="text-xs text-gray-600">
+                              {a.teacher} {a.academic_year && `(${a.academic_year})`}
+                            </div>
                           </div>
-                        </div>
                         <div className="flex gap-2">
                           <button
                             onClick={() => handleEditAssignment(a)}
@@ -395,6 +407,19 @@ export default function DivisionManager() {
                     }
                   />
 
+                  <Input
+                    label="Academic Year"
+                    placeholder="e.g. 2025-26"
+                    value={assignmentForm.academic_year}
+                    onChange={(e) =>
+                      setAssignmentForm((f) => ({
+                        ...f,
+                        academic_year: e.target.value,
+                      }))
+                    }
+                    required
+                  />
+
                   <div className="flex flex-col gap-2 pt-2">
                     <Button
                       type="submit"
@@ -402,7 +427,8 @@ export default function DivisionManager() {
                       className="w-full"
                       disabled={
                         !assignmentForm.proff_id ||
-                        (!editingAssignmentId && !assignmentForm.sub_id)
+                        (!editingAssignmentId && !assignmentForm.sub_id) ||
+                        !assignmentForm.academic_year
                       }
                     >
                       {editingAssignmentId ? "Update" : "Add"}
@@ -414,12 +440,12 @@ export default function DivisionManager() {
                         variant="secondary"
                         onClick={() => {
                           setEditingAssignmentId(null);
-                          setAssignmentForm({ sub_id: "", proff_id: "" });
+                          setAssignmentForm({ sub_id: "", proff_id: "", academic_year: "" });
                           setEditingSubjectName("");
                         }}
                         className="w-full"
                       >
-                        Cancel Edit
+                         Cancel Edit
                       </Button>
                     )}
                   </div>
