@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Table, Modal, Button, Input } from "./ui/SharedComponents";
+import SearchSelect from "./SearchSelect";
 
 export default function RankingView() {
   const [selectedDept, setSelectedDept] = useState("");
@@ -25,6 +26,8 @@ export default function RankingView() {
 
   const [selectedAcademicYear, setSelectedAcademicYear] = useState("");
   const [academicYears, setAcademicYears] = useState([]);
+
+  const [professors, setProfessors] = useState([]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -135,6 +138,27 @@ export default function RankingView() {
     return () => clearInterval(interval);
   }, [selectedDept, selectedYear, selectedDiv, selectedAcademicYear]);
 
+  const fetchProfessorNames = async () => {
+    const res = await fetch("/api/reports/professors");
+    const data = await res.json();
+    setProfessors(data);
+  };
+
+  useEffect(() => {
+    fetchProfessorNames();
+  }, []);
+
+  const canDownloadReport =
+    selectedDept &&
+    selectedYear &&
+    selectedDiv &&
+    selectedAcademicYear &&
+    years.length > 0 &&
+    divisions.length > 0 &&
+    academicYears.length > 0;
+
+  const canDownloadProfessorReport = professorName.trim() !== "";
+
   return (
     <div>
       <div className="flex gap-4 mb-6 bg-gray-50 p-4 border border-gray-200">
@@ -225,9 +249,13 @@ export default function RankingView() {
           Ranking Results
         </h2>
         <Button
-          variant="secondary"
-          onClick={() => setIsDownloadModalOpen(true)}
-          className="text-xs"
+          variant="primary"
+          onClick={() => {
+            if (!canDownloadReport) return;
+            setIsDownloadModalOpen(true);
+          }}
+          className="text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled={!canDownloadReport}
         >
           Download Report
         </Button>
@@ -248,7 +276,7 @@ export default function RankingView() {
               onClick={() => {
                 const url = `/api/reports/class?department=${selectedDept}&year=${selectedYear}&division=${selectedDiv}&academic_year=${selectedAcademicYear}`;
                 window.open(url, "_blank");
-                
+
                 setIsDownloadModalOpen(false);
               }}
             >
@@ -266,19 +294,23 @@ export default function RankingView() {
           </div>
 
           <div className="p-4 border border-black bg-gray-50">
-            <Input
-              label="Professor Name"
-              placeholder="Enter name..."
-              value={professorName}
-              onChange={(e) => setProfessorName(e.target.value)}
-              className="mb-4"
+            <SearchSelect
+              label="Professor"
+              items={professors}
+              onSelect={(p) => setProfessorName(p.name)}
             />
             <Button
               variant="primary"
-              className="w-full"
-              disabled={!professorName.trim()}
+              className="w-full mt-4 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={!canDownloadProfessorReport}
               onClick={() => {
-                alert(`Downloading report for Professor: ${professorName}`);
+                if (!canDownloadProfessorReport) return;
+                const url =
+                  `/api/reports/professor?` +
+                  `name=${encodeURIComponent(professorName)}`;
+
+                window.open(url, "_blank");
+
                 setIsDownloadModalOpen(false);
                 setProfessorName("");
               }}
