@@ -1305,6 +1305,89 @@ app.get("/api/results", (req, res) => {
   });
 });
 
+//draw table func
+function drawTable(doc, options) {
+  const {
+    startX,
+    startY,
+    colWidths,
+    headers,
+    rows,
+    footerHeight = 80,
+    minRowHeight = 30,
+    drawFooter,
+    nextPage
+  } = options;
+
+  let y = startY;
+
+  const headerHeight = 30;
+
+  function drawHeader() {
+    let x = startX;
+
+    doc.font("Helvetica-Bold").fontSize(12);
+
+    headers.forEach((header, i) => {
+      doc.rect(x, y, colWidths[i], headerHeight).stroke();
+
+      doc.text(header, x, y + 8, {
+        width: colWidths[i],
+        align: "center",
+      });
+
+      x += colWidths[i];
+    });
+
+    y += headerHeight;
+  }
+
+  drawHeader();
+
+  doc.font("Helvetica");
+
+  rows.forEach((row) => {
+    // calculate dynamic row height
+    let maxHeight = minRowHeight;
+
+    row.forEach((cell, i) => {
+      const height = doc.heightOfString(String(cell), {
+        width: colWidths[i],
+      });
+
+      maxHeight = Math.max(maxHeight, height + 12);
+    });
+
+    const rowHeight = maxHeight;
+
+    // page break
+    if (y + rowHeight > doc.page.height - footerHeight) {
+      drawFooter();
+      doc.addPage();
+      nextPage();
+      y = 50;
+      drawHeader();
+    }
+
+    let x = startX;
+
+    row.forEach((cell, i) => {
+      doc.rect(x, y, colWidths[i], rowHeight).stroke();
+
+      doc.text(String(cell), x, y + 8, {
+        width: colWidths[i],
+        align: "center",
+      });
+
+      x += colWidths[i];
+    });
+
+    y += rowHeight;
+  });
+
+  return y; // return final Y position
+}
+
 //generate report by class
 app.get("/api/reports/class", (req, res) => {
   const { department, year, division, academic_year } = req.query;
@@ -1495,113 +1578,46 @@ app.get("/api/reports/class", (req, res) => {
 
         doc.moveDown(3);
 
-        /* ---------- TABLE SETUP ---------- */
+        /* ---------- Tbale Generation ---------- */
+        const rows = sortedTeachers.map((t, i) => {
+          const snap = snapshotMap[t.teacherId];
+
+          return [
+            i + 1,
+            snap?.teacher || "Unknown",
+            snap?.subject || "Unknown",
+            t.score,
+          ];
+        });
 
         const tableTop = doc.y;
-        const tableLeft = 50;
-        const tableWidth = 500;
 
-        const colWidths = [70, 200, 150, 80];
-        const minRowHeight = 30;
-        const headerHeight = 30;
+        const tableLeft = 50;
+
+        const colWidths = [60, 240, 130, 70];
 
         const headers = ["Rank", "Professor", "Subject", "Score"];
 
-        /* ---------- DRAW HEADER ROW ---------- */
-
-        doc.font("Helvetica-Bold").fontSize(12);
-
-        let x = tableLeft;
-
-        headers.forEach((h, i) => {
-          doc.rect(x, tableTop, colWidths[i], headerHeight).stroke();
-
-          doc.text(h, x, tableTop + 8, {
-            width: colWidths[i],
-            align: "center",
-          });
-
-          x += colWidths[i];
+        const tableEndY = drawTable(doc, {
+          startX: tableLeft,
+          startY: tableTop,
+          colWidths,
+          headers,
+          rows,
+          drawFooter,
+          nextPage: () => pageNumber++, 
         });
-
-        /* ---------- TABLE BODY ---------- */
-
-        doc.font("Helvetica");
-
-        let y = tableTop + headerHeight;
-
-        sortedTeachers.forEach((t, i) => {
-          const snap = snapshotMap[t.teacherId];
-
-          const professorText = snap?.teacher || "Unknown";
-          const subjectText = snap?.subject || "Unknown";
-
-          // Calculate dynamic height first
-          const professorHeight = doc.heightOfString(professorText, {
-            width: colWidths[1],
-          });
-
-          const subjectHeight = doc.heightOfString(subjectText, {
-            width: colWidths[2],
-          });
-
-          const dynamicHeight = Math.max(professorHeight, subjectHeight) + 12;
-          const rowHeight = Math.max(minRowHeight, dynamicHeight);
-
-          // Now we can safely check page break
-          if (y + rowHeight > doc.page.height - 80) {
-            drawFooter();
-            doc.addPage();
-
-            y = 50;
-
-            // Re-draw header
-            doc.font("Helvetica-Bold").fontSize(12);
-
-            let x = tableLeft;
-
-            headers.forEach((h, idx) => {
-              doc.rect(x, y, colWidths[idx], headerHeight).stroke();
-
-              doc.text(h, x, y + 8, {
-                width: colWidths[idx],
-                align: "center",
-              });
-
-              x += colWidths[idx];
-            });
-
-            y += headerHeight;
-          }
-
-          const row = [i + 1, professorText, subjectText, t.score];
-
-          let x = tableLeft;
-
-          row.forEach((cell, colIndex) => {
-            doc.rect(x, y, colWidths[colIndex], rowHeight).stroke();
-
-            doc.text(cell.toString(), x, y + 8, {
-              width: colWidths[colIndex],
-              align: "center",
-            });
-
-            x += colWidths[colIndex];
-          });
-
-          y += rowHeight;
-        });
-
         /* ---------- VOTE COUNT ---------- */
-
-        const voteTextY = y + 20;
 
         const voteText = `Total Students Voted: ${votes.length}`;
 
         const voteWidth = doc.widthOfString(voteText);
-        const voteX = tableLeft + (tableWidth - voteWidth) / 2;
 
-        doc.text(voteText, voteX, voteTextY);
+        const voteX = tableLeft + (500 - voteWidth) / 2;
+
+        doc.font("Helvetica").fontSize(10);
+
+        doc.text(voteText, voteX, tableEndY + 20);
 
         drawFooter();
         doc.end();
