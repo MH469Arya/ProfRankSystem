@@ -246,7 +246,9 @@ export default function RankingView() {
             <Button
               className="w-full"
               onClick={() => {
-                alert("Downloading report by class...");
+                const url = `/api/reports/class?department=${selectedDept}&year=${selectedYear}&division=${selectedDiv}&academic_year=${selectedAcademicYear}`;
+                window.open(url, "_blank");
+                
                 setIsDownloadModalOpen(false);
               }}
             >

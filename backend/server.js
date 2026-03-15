@@ -8,6 +8,8 @@ const jwt = require("jsonwebtoken");
 const authenticate = require("./middleware/auth");
 const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
+const PDFDocument = require("pdfkit");
+const fs = require("fs");
 
 const app = express();
 const cors = require("cors");
@@ -1227,7 +1229,7 @@ app.get("/api/results", (req, res) => {
 
     const totalVotes = votes.length;
 
-    if (totalVotes === 0) {
+    if (!votes || totalVotes === 0) {
       return res.json({
         rankings: [],
         totalVotes: 0,
@@ -1298,6 +1300,311 @@ app.get("/api/results", (req, res) => {
           rankings: finalRanking,
           totalVotes,
         });
+      },
+    );
+  });
+});
+
+//generate report by class
+app.get("/api/reports/class", (req, res) => {
+  const { department, year, division, academic_year } = req.query;
+
+  if (!department || !year || !division || !academic_year) {
+    return res.status(400).json({ message: "Missing filters" });
+  }
+
+  const fullDivision = `${department}-${year}-${division}`.toUpperCase();
+
+  const voteSql = `
+  SELECT vr.rankings, vr.session_id
+  FROM voting_results vr
+  JOIN voting_sessions vs ON vr.session_id = vs.id
+  WHERE UPPER(vs.division) = UPPER(?)
+  AND (
+    CASE
+      WHEN MONTH(vr.submitted_at) >= 7
+        THEN CONCAT(YEAR(vr.submitted_at), '-', RIGHT(YEAR(vr.submitted_at)+1,2))
+      ELSE
+        CONCAT(YEAR(vr.submitted_at)-1, '-', RIGHT(YEAR(vr.submitted_at),2))
+    END
+  ) = ?
+  `;
+
+  db.query(voteSql, [fullDivision, academic_year], (err, votes) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "Database error" });
+    }
+
+    if (!votes || votes.length === 0) {
+      return res.status(404).json({
+        message: "No votes available for this class",
+      });
+    }
+
+    const sessionId = votes[0].session_id;
+
+    db.query(
+      "SELECT ts_snap, start_time FROM voting_sessions WHERE id = ?",
+      [sessionId],
+      (snapErr, snapRows) => {
+        if (snapErr) {
+          console.error(snapErr);
+          return res.status(500).json({ message: "Snapshot fetch error" });
+        }
+
+        const sessionTime = new Date(snapRows[0].start_time);
+
+        const sessionDate = sessionTime.toLocaleDateString();
+        const sessionClock = sessionTime.toLocaleTimeString();
+
+        const snapshot =
+          typeof snapRows[0].ts_snap === "string"
+            ? JSON.parse(snapRows[0].ts_snap)
+            : snapRows[0].ts_snap;
+
+        const snapshotMap = {};
+        snapshot.forEach((item) => {
+          snapshotMap[item.teacher_id] = item;
+        });
+
+        const scoreMap = {};
+
+        votes.forEach((vote) => {
+          const rankingArray =
+            typeof vote.rankings === "string"
+              ? JSON.parse(vote.rankings)
+              : vote.rankings;
+
+          const totalTeachers = rankingArray.length;
+
+          rankingArray.forEach((teacherId, index) => {
+            const points = totalTeachers - index - 1;
+
+            if (!scoreMap[teacherId]) {
+              scoreMap[teacherId] = 0;
+            }
+
+            scoreMap[teacherId] += points;
+          });
+        });
+
+        const sortedTeachers = Object.entries(scoreMap)
+          .map(([teacherId, score]) => ({
+            teacherId: parseInt(teacherId),
+            score,
+          }))
+          .sort((a, b) => b.score - a.score);
+
+        /* ---------------- PDF GENERATION ---------------- */
+
+        const doc = new PDFDocument({ margin: 50 });
+        let pageNumber = 1;
+
+        const generatedAt = new Date();
+        const generatedText =
+          generatedAt.toLocaleDateString() +
+          " " +
+          generatedAt.toLocaleTimeString();
+
+        function drawFooter() {
+          const pageWidth = doc.page.width;
+          const footerY = doc.page.height - 40;
+
+          doc.save();
+
+          // separator line
+          doc
+            .moveTo(50, footerY - 10)
+            .lineTo(pageWidth - 50, footerY - 10)
+            .lineWidth(0.5)
+            .stroke();
+
+          doc.font("Helvetica").fontSize(9);
+
+          // LEFT
+          doc.text(`Generated On: ${generatedText}`, 50, footerY, {
+            lineBreak: false,
+          });
+
+          // CENTER (manual centering)
+          const centerText = "Professor Ranking System";
+
+          const contentWidth = pageWidth - 100; // margins 50 + 50
+          const centerWidth = doc.widthOfString(centerText);
+
+          const centerX = 65 + (contentWidth - centerWidth) / 2;
+
+          doc.text(centerText, centerX, footerY, { lineBreak: false });
+
+          // RIGHT (manual right alignment)
+          const pageText = `Page ${pageNumber}`;
+          const pageWidthText = doc.widthOfString(pageText);
+          doc.text(pageText, pageWidth - 50 - pageWidthText, footerY, {
+            lineBreak: false,
+          });
+
+          doc.restore();
+        }
+
+        res.setHeader("Content-Type", "application/pdf");
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename=class-report-${department}-${year}-${division}.pdf`,
+        );
+
+        doc.pipe(res);
+
+        /* ---------- HEADER IMAGE ---------- */
+
+        const headerPath = path.join(__dirname, "assets", "header.png");
+
+        if (require("fs").existsSync(headerPath)) {
+          doc.image(headerPath, 50, 30, { width: 500 });
+        }
+
+        doc.moveDown(4);
+
+        /* ---------- TITLE ---------- */
+
+        doc.moveDown(2);
+
+        doc
+          .fontSize(18)
+          .font("Helvetica-Bold")
+          .text("Professor Ranking Report", {
+            align: "center",
+          });
+
+        /* ---------- REPORT INFO BLOCK ---------- */
+
+        doc.font("Helvetica-Bold").fontSize(15);
+
+        doc.text(`Department: ${department}`, { align: "center" });
+        doc.text(`Academic Year: ${academic_year}`, { align: "center" });
+        doc.moveDown(1);
+
+        const infoY = doc.y;
+
+        doc.font("Helvetica").fontSize(12);
+        doc.text(`Year: ${year}`, 50, infoY);
+        doc.text(`Division: ${division}`, 350, infoY);
+
+        doc.text(`Date: ${sessionDate}`, 50, infoY + 18);
+        doc.text(`Time: ${sessionClock}`, 350, infoY + 18);
+
+        doc.moveDown(3);
+
+        /* ---------- TABLE SETUP ---------- */
+
+        const tableTop = doc.y;
+        const tableLeft = 50;
+        const tableWidth = 500;
+
+        const colWidths = [70, 200, 150, 80];
+        const minRowHeight = 30;
+        const headerHeight = 30;
+
+        const headers = ["Rank", "Professor", "Subject", "Score"];
+
+        /* ---------- DRAW HEADER ROW ---------- */
+
+        doc.font("Helvetica-Bold").fontSize(12);
+
+        let x = tableLeft;
+
+        headers.forEach((h, i) => {
+          doc.rect(x, tableTop, colWidths[i], headerHeight).stroke();
+
+          doc.text(h, x, tableTop + 8, {
+            width: colWidths[i],
+            align: "center",
+          });
+
+          x += colWidths[i];
+        });
+
+        /* ---------- TABLE BODY ---------- */
+
+        doc.font("Helvetica");
+
+        let y = tableTop + headerHeight;
+
+        sortedTeachers.forEach((t, i) => {
+          const snap = snapshotMap[t.teacherId];
+
+          const professorText = snap?.teacher || "Unknown";
+          const subjectText = snap?.subject || "Unknown";
+
+          // Calculate dynamic height first
+          const professorHeight = doc.heightOfString(professorText, {
+            width: colWidths[1],
+          });
+
+          const subjectHeight = doc.heightOfString(subjectText, {
+            width: colWidths[2],
+          });
+
+          const dynamicHeight = Math.max(professorHeight, subjectHeight) + 12;
+          const rowHeight = Math.max(minRowHeight, dynamicHeight);
+
+          // Now we can safely check page break
+          if (y + rowHeight > doc.page.height - 80) {
+            drawFooter();
+            doc.addPage();
+
+            y = 50;
+
+            // Re-draw header
+            doc.font("Helvetica-Bold").fontSize(12);
+
+            let x = tableLeft;
+
+            headers.forEach((h, idx) => {
+              doc.rect(x, y, colWidths[idx], headerHeight).stroke();
+
+              doc.text(h, x, y + 8, {
+                width: colWidths[idx],
+                align: "center",
+              });
+
+              x += colWidths[idx];
+            });
+
+            y += headerHeight;
+          }
+
+          const row = [i + 1, professorText, subjectText, t.score];
+
+          let x = tableLeft;
+
+          row.forEach((cell, colIndex) => {
+            doc.rect(x, y, colWidths[colIndex], rowHeight).stroke();
+
+            doc.text(cell.toString(), x, y + 8, {
+              width: colWidths[colIndex],
+              align: "center",
+            });
+
+            x += colWidths[colIndex];
+          });
+
+          y += rowHeight;
+        });
+
+        /* ---------- VOTE COUNT ---------- */
+
+        const voteTextY = y + 20;
+
+        const voteText = `Total Students Voted: ${votes.length}`;
+
+        const voteWidth = doc.widthOfString(voteText);
+        const voteX = tableLeft + (tableWidth - voteWidth) / 2;
+
+        doc.text(voteText, voteX, voteTextY);
+
+        drawFooter();
+        doc.end();
       },
     );
   });
