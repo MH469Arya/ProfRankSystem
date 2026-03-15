@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Table } from "./ui/SharedComponents";
+import { Table, Modal, Button, Input } from "./ui/SharedComponents";
 
 export default function RankingView() {
   const [selectedDept, setSelectedDept] = useState("");
@@ -8,6 +8,9 @@ export default function RankingView() {
 
   const [rankings, setRankings] = useState([]);
   const [totalVotes, setTotalVotes] = useState(0);
+
+  const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
+  const [professorName, setProfessorName] = useState("");
 
   const [departments, setDepartments] = useState([]);
   const [classes, setClasses] = useState([]);
@@ -217,9 +220,72 @@ export default function RankingView() {
         </div>
       </div>
 
-      <h2 className="text-lg font-bold uppercase tracking-wide mb-4">
-        Ranking Results
-      </h2>
+      <div className="flex justify-between items-center mb-4">
+        <h2 className="text-lg font-bold uppercase tracking-wide">
+          Ranking Results
+        </h2>
+        <Button
+          variant="secondary"
+          onClick={() => setIsDownloadModalOpen(true)}
+          className="text-xs"
+        >
+          Download Report
+        </Button>
+      </div>
+
+      <Modal
+        isOpen={isDownloadModalOpen}
+        onClose={() => setIsDownloadModalOpen(false)}
+        title="Download Report"
+      >
+        <div className="space-y-6">
+          <div className="p-4 border border-black bg-gray-50 flex flex-col items-center">
+            <p className="text-xs font-bold uppercase mb-4 text-center">
+              Generate report for current selected class
+            </p>
+            <Button
+              className="w-full"
+              onClick={() => {
+                alert("Downloading report by class...");
+                setIsDownloadModalOpen(false);
+              }}
+            >
+              Download By Class
+            </Button>
+          </div>
+
+          <div className="relative py-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-300"></div>
+            </div>
+            <div className="relative flex justify-center text-xs uppercase font-bold">
+              <span className="bg-white px-2 text-gray-500">OR</span>
+            </div>
+          </div>
+
+          <div className="p-4 border border-black bg-gray-50">
+            <Input
+              label="Professor Name"
+              placeholder="Enter name..."
+              value={professorName}
+              onChange={(e) => setProfessorName(e.target.value)}
+              className="mb-4"
+            />
+            <Button
+              variant="primary"
+              className="w-full"
+              disabled={!professorName.trim()}
+              onClick={() => {
+                alert(`Downloading report for Professor: ${professorName}`);
+                setIsDownloadModalOpen(false);
+                setProfessorName("");
+              }}
+            >
+              Download By Professor
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Table
         headers={["Rank", "Teacher Name", "Subject", "Score"]}
