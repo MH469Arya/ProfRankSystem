@@ -1,4 +1,4 @@
--- Active: 1758452166660@@127.0.0.1@3306@prs_database
+-- Active: 1758969651640@@127.0.0.1@3306@prs_database
 
 DROP DATABASE prs_database;
 CREATE DATABASE prs_database;
@@ -129,6 +129,7 @@ VALUES (
 -- (3, 'DS Subject 1', 7),(3, 'DS Subject 2', 7),(3, 'DS Subject 3', 7),(3, 'DS Subject 4', 7),(3, 'DS Subject 5', 7),
 -- (3, 'DS Subject 1', 8),(3, 'DS Subject 2', 8),(3, 'DS Subject 3', 8),(3, 'DS Subject 4', 8),(3, 'DS Subject 5', 8);
 
+DROP TABLE voting_results;
 CREATE TABLE voting_sessions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     division VARCHAR(50) NOT NULL,

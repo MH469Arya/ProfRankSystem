@@ -1916,6 +1916,8 @@ app.get("/api/reports/professor", (req, res) => {
     let worstRank = 0;
 
     const deptRanks = {};
+    const deptScores = {};
+    let targetProfessorId = null;
 
     for (const session of sessions) {
       const snapshot =
@@ -1925,9 +1927,15 @@ app.get("/api/reports/professor", (req, res) => {
 
       const professorEntry = snapshot.find((s) => s.teacher === professorName);
 
-      if (!professorEntry) continue;
+      let professorId = null;
 
-      const professorId = professorEntry.teacher_id;
+      if (professorEntry) {
+        professorId = professorEntry.teacher_id;
+
+        if (!targetProfessorId) {
+          targetProfessorId = professorId;
+        }
+      }
 
       const votes = await new Promise((resolve, reject) => {
         db.query(
@@ -1966,6 +1974,25 @@ app.get("/api/reports/professor", (req, res) => {
         }))
         .sort((a, b) => b.score - a.score);
 
+      const division = session.division;
+      const department = division.split("-")[0];
+
+      // accumulate department scores for ALL teachers
+      if (!deptScores[department]) {
+        deptScores[department] = {};
+      }
+
+      sorted.forEach((t) => {
+        if (!deptScores[department][t.teacherId]) {
+          deptScores[department][t.teacherId] = 0;
+        }
+
+        deptScores[department][t.teacherId] += t.score;
+      });
+
+      // skip report row if professor not in this session
+      if (!professorEntry) continue;
+
       const rank = sorted.findIndex((t) => t.teacherId === professorId) + 1;
 
       const score = sorted.find((t) => t.teacherId === professorId)?.score || 0;
@@ -1978,8 +2005,6 @@ app.get("/api/reports/professor", (req, res) => {
       bestRank = Math.min(bestRank, rank);
       worstRank = Math.max(worstRank, rank);
 
-      const division = session.division;
-      const department = division.split("-")[0];
       const year = division.split("-")[1];
       const div = division.split("-")[2];
 
@@ -1991,16 +2016,21 @@ app.get("/api/reports/professor", (req, res) => {
 
       const academicYear =
         new Date(session.start_time).getMonth() >= 6
-          ? `${new Date(session.start_time).getFullYear()}-${(new Date(session.start_time).getFullYear() + 1).toString().slice(2)}`
-          : `${new Date(session.start_time).getFullYear() - 1}-${new Date(session.start_time).getFullYear().toString().slice(2)}`;
+          ? `${new Date(session.start_time).getFullYear()}-${(
+              new Date(session.start_time).getFullYear() + 1
+            )
+              .toString()
+              .slice(2)}`
+          : `${new Date(session.start_time).getFullYear() - 1}-${new Date(
+              session.start_time,
+            )
+              .getFullYear()
+              .toString()
+              .slice(2)}`;
 
       subjects.add(subject);
       departments.add(department);
       academicYears.add(academicYear);
-
-      if (!deptRanks[department] || deptRanks[department] > rank) {
-        deptRanks[department] = rank;
-      }
 
       reportRows.push([
         department.toUpperCase(),
@@ -2024,6 +2054,23 @@ app.get("/api/reports/professor", (req, res) => {
     });
 
     const avgRank = (totalRank / totalSessions).toFixed(2);
+
+    Object.keys(deptScores).forEach((dept) => {
+      const ranking = Object.entries(deptScores[dept])
+        .map(([tid, score]) => ({
+          teacherId: parseInt(tid),
+          score,
+        }))
+        .sort((a, b) => b.score - a.score);
+
+      const profEntry = ranking.findIndex(
+        (r) => r.teacherId === targetProfessorId,
+      );
+
+      if (profEntry !== -1) {
+        deptRanks[dept] = profEntry + 1;
+      }
+    });
 
     generateProfessorPDF({
       res,
