@@ -1585,16 +1585,19 @@ app.get("/api/reports/class", (req, res) => {
         doc.moveDown(3);
 
         doc
-          .font("Helvetica-Oblique")
-          .fontSize(10)
-          .text(
-            "Rankings are computed using the Borda Count method, where higher preference yields higher points.",
-            {
-              align: "center",
-            },
-          );
+    .font("Helvetica-Oblique")
+    .fontSize(10)
+    .text(
+      "Rankings are computed using the Borda Count method, where higher preference yields higher points.",
+      50,
+      doc.y,
+      {
+        width: doc.page.width - 100,
+        align: "center",
+      },
+    );
 
-        doc.moveDown(1.5);
+  doc.moveDown(1.5);
 
         /* ---------- Tbale Generation ---------- */
         const rows = sortedTeachers.map((t, i) => {
@@ -1782,7 +1785,10 @@ function generateProfessorPDF(data) {
     .fontSize(10)
     .text(
       "Rankings are computed using the Borda Count method, where higher preference yields higher points.",
+      50,
+      doc.y,
       {
+        width: doc.page.width - 100,
         align: "center",
       },
     );
@@ -1922,18 +1928,6 @@ app.get("/api/reports/professor", (req, res) => {
       const division = session.division;
       const department = division.split("-")[0];
 
-      // accumulate department scores for ALL teachers
-      if (!deptScores[department]) {
-        deptScores[department] = {};
-      }
-
-      sorted.forEach((t) => {
-        if (!deptScores[department][t.teacherId]) {
-          deptScores[department][t.teacherId] = 0;
-        }
-
-        deptScores[department][t.teacherId] += t.score;
-      });
 
       // skip report row if professor not in this session
       if (!professorEntry) continue;
@@ -1953,7 +1947,7 @@ app.get("/api/reports/professor", (req, res) => {
       const year = division.split("-")[1];
       const div = division.split("-")[2];
 
-      const className = `${year}-${div}`;
+      const className = `${year}-${div}`.toUpperCase();
 
       const subject = professorEntry.subject;
 
