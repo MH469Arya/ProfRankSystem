@@ -34,7 +34,7 @@ function generatePassword() {
   return crypto.randomBytes(2).toString("hex");
 }
 app.get("/", (req, res) => {
-  res.send("Backend is running 🚀");
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
 //login
@@ -2072,6 +2072,10 @@ setInterval(() => {
   });
 }, 5000); // every 30 seconds
 
-app.listen(5000, "0.0.0.0", () =>
-  console.log("Server running on http://localhost:5000"),
+app.get((req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+app.listen(9000, "0.0.0.0", () =>
+  console.log("Server running on http://localhost:9000"),
 );
