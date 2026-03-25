@@ -1584,6 +1584,18 @@ app.get("/api/reports/class", (req, res) => {
 
         doc.moveDown(3);
 
+        doc
+          .font("Helvetica-Oblique")
+          .fontSize(10)
+          .text(
+            "Rankings are computed using the Borda Count method, where higher preference yields higher points.",
+            {
+              align: "center",
+            },
+          );
+
+        doc.moveDown(1.5);
+
         /* ---------- Tbale Generation ---------- */
         const rows = sortedTeachers.map((t, i) => {
           const snap = snapshotMap[t.teacherId];
@@ -1670,19 +1682,8 @@ app.get("/api/reports/professors", (req, res) => {
 
 //proff pdf generator func
 function generateProfessorPDF(data) {
-  const {
-    res,
-    professorName,
-    subjects,
-    departments,
-    academicYears,
-    deptRanks,
-    totalSessions,
-    avgRank,
-    bestRank,
-    worstRank,
-    rows,
-  } = data;
+  const { res, professorName, subjects, departments, academicYears, rows } =
+    data;
 
   const doc = new PDFDocument({ margin: 50 });
   let pageNumber = 1;
@@ -1774,75 +1775,19 @@ function generateProfessorPDF(data) {
   doc.font("Helvetica-Bold").text("Academic Years:", 50, infoStartY + 40);
   doc.font("Helvetica").text(academicYears.join(", "), 180, infoStartY + 40);
 
-  doc.moveDown(2.5);
-
-  doc.moveDown(1);
-
-  const deptRankText = Object.entries(deptRanks)
-    .map(([d, r]) => `${d.toUpperCase()}: ${r}`)
-    .join(", ");
+  doc.moveDown(3);
 
   doc
-    .font("Helvetica-Bold")
-    .fontSize(14)
-    .text("Summary", 50, doc.y, {
-      width: doc.page.width - 100,
-      align: "center",
-    });
+    .font("Helvetica-Oblique")
+    .fontSize(10)
+    .text(
+      "Rankings are computed using the Borda Count method, where higher preference yields higher points.",
+      {
+        align: "center",
+      },
+    );
 
-  doc.moveDown(0.8);
-
-  const summaryY = doc.y;
-
-  const pageLeft = doc.page.margins.left;
-  const pageRight = doc.page.width - doc.page.margins.right;
-
-  const colLeft = pageLeft;
-  const colCenter = pageLeft + (pageRight - pageLeft) / 2 - 70;
-  const colRight = pageRight - 140;
-
-  doc.fontSize(11);
-
-  const labelGap = 65;
-
-  const summaryWidth =
-    doc.page.width - doc.page.margins.left - doc.page.margins.right;
-
-  const leftX = doc.page.margins.left;
-  const rightX = doc.page.width - doc.page.margins.right;
-  const centerX = doc.page.width / 2;
-
-  doc.fontSize(11);
-
-  function drawLeft(label, value, y) {
-    doc.font("Helvetica-Bold").text(label, leftX, y);
-    doc.font("Helvetica").text(value, leftX + 75, y);
-  }
-
-  function drawCenter(label, value, y) {
-    doc.font("Helvetica-Bold").text(label, centerX - 60, y);
-    doc.font("Helvetica").text(value, centerX + 15, y);
-  }
-
-  function drawRight(label, value, y) {
-    const text = `${label} ${value}`;
-    const width = doc.widthOfString(text);
-
-    doc.font("Helvetica-Bold").text(label, rightX - width, y);
-
-    doc
-      .font("Helvetica")
-      .text(value, rightX - width + doc.widthOfString(label) + 5, y);
-  }
-
-  drawLeft("Best Rank:", bestRank, summaryY);
-  drawCenter("Average:", avgRank, summaryY);
-  drawRight("Lowest:", worstRank, summaryY);
-
-  drawLeft("Dept Rank:", deptRankText, summaryY + 22);
-  drawRight("Sessions:", totalSessions, summaryY + 22);
-
-  doc.moveDown(3);
+  doc.moveDown(1.5);
 
   doc
     .font("Helvetica-Bold")
@@ -1910,13 +1855,13 @@ app.get("/api/reports/professor", (req, res) => {
     let departments = new Set();
     let academicYears = new Set();
 
-    let totalRank = 0;
-    let totalSessions = 0;
-    let bestRank = Infinity;
-    let worstRank = 0;
+    // let totalRank = 0;
+    // let totalSessions = 0;
+    // let bestRank = Infinity;
+    // let worstRank = 0;
 
-    const deptRanks = {};
-    const deptScores = {};
+    // const deptRanks = {};
+    // const deptScores = {};
     let targetProfessorId = null;
 
     for (const session of sessions) {
@@ -1999,11 +1944,11 @@ app.get("/api/reports/professor", (req, res) => {
 
       if (!rank) continue;
 
-      totalRank += rank;
-      totalSessions++;
+      // totalRank += rank;
+      // totalSessions++;
 
-      bestRank = Math.min(bestRank, rank);
-      worstRank = Math.max(worstRank, rank);
+      // bestRank = Math.min(bestRank, rank);
+      // worstRank = Math.max(worstRank, rank);
 
       const year = division.split("-")[1];
       const div = division.split("-")[2];
@@ -2053,24 +1998,24 @@ app.get("/api/reports/professor", (req, res) => {
       return b[6].localeCompare(a[6]);
     });
 
-    const avgRank = (totalRank / totalSessions).toFixed(2);
+    // const avgRank = (totalRank / totalSessions).toFixed(2);
 
-    Object.keys(deptScores).forEach((dept) => {
-      const ranking = Object.entries(deptScores[dept])
-        .map(([tid, score]) => ({
-          teacherId: parseInt(tid),
-          score,
-        }))
-        .sort((a, b) => b.score - a.score);
+    // Object.keys(deptScores).forEach((dept) => {
+    //   const ranking = Object.entries(deptScores[dept])
+    //     .map(([tid, score]) => ({
+    //       teacherId: parseInt(tid),
+    //       score,
+    //     }))
+    //     .sort((a, b) => b.score - a.score);
 
-      const profEntry = ranking.findIndex(
-        (r) => r.teacherId === targetProfessorId,
-      );
+    //   const profEntry = ranking.findIndex(
+    //     (r) => r.teacherId === targetProfessorId,
+    //   );
 
-      if (profEntry !== -1) {
-        deptRanks[dept] = profEntry + 1;
-      }
-    });
+    //   if (profEntry !== -1) {
+    //     deptRanks[dept] = profEntry + 1;
+    //   }
+    // });
 
     generateProfessorPDF({
       res,
@@ -2078,11 +2023,11 @@ app.get("/api/reports/professor", (req, res) => {
       subjects: [...subjects],
       departments: [...departments],
       academicYears: [...academicYears],
-      deptRanks,
-      totalSessions,
-      avgRank,
-      bestRank,
-      worstRank,
+      // deptRanks,
+      // totalSessions,
+      // avgRank,
+      // bestRank,
+      // worstRank,
       rows: reportRows,
     });
   });
