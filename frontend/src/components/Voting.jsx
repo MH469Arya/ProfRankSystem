@@ -4,7 +4,7 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { Button } from "./ui/SharedComponents";
 
 export default function Voting() {
-  const API_BASE = `${window.location.protocol}//${window.location.hostname}:5000`;
+  //const API_BASE = `${window.location.protocol}//${window.location.hostname}:9000`;
   const [searchParams] = useSearchParams();
   console.log("Voting page loaded");
   console.log("Full URL:", window.location.href);
@@ -32,10 +32,10 @@ export default function Voting() {
         console.log("INIT STARTED");
         console.log(
           "Fetching session from:",
-          `${API_BASE}/api/voting-sessions/${sessionId}`,
+          `/api/voting-sessions/${sessionId}`,
         );
         const sessionRes = await fetch(
-          `${API_BASE}/api/voting-sessions/${sessionId}`,
+          `/api/voting-sessions/${sessionId}`,
         );
         console.log("Response status:", sessionRes.status);
         if (sessionRes.status === 403) {
@@ -53,7 +53,7 @@ export default function Voting() {
         const session = await sessionRes.json();
 
         const fingerprint = generateFingerprint();
-        const deviceCheck = await fetch(`${API_BASE}/api/check_device`, {
+        const deviceCheck = await fetch(`/api/check_device`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -70,7 +70,7 @@ export default function Voting() {
         }
 
         if (voteSessionId) {
-          const check = await fetch(`${API_BASE}/api/check_vote`, {
+          const check = await fetch(`/api/check_vote`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -96,7 +96,7 @@ export default function Voting() {
         setTitle(`Voting for ${dept} - ${classPart}`);
 
         const response = await fetch(
-          `${API_BASE}/api/teachers?session=${sessionId}`,
+          `/api/teachers?session=${sessionId}`,
         );
 
         if (!response.ok) {
@@ -252,7 +252,7 @@ export default function Voting() {
 
     const fingerprint = generateFingerprint();
     try {
-      const response = await fetch(`${API_BASE}/api/vote`, {
+      const response = await fetch(`/api/vote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
