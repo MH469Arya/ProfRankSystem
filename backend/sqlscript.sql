@@ -8,7 +8,7 @@ USE prs_database;
 CREATE TABLE IF NOT EXISTS depts (
     id INT PRIMARY KEY AUTO_INCREMENT,
     code VARCHAR(20) UNIQUE
-)
+);
 
 CREATE TABLE IF NOT EXISTS users (
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
     dept_id INT NULL,
 
     FOREIGN KEY (dept_id) REFERENCES depts(id) ON DELETE CASCADE
-)
+);
 
 CREATE TABLE IF NOT EXISTS classes (
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -28,7 +28,7 @@ CREATE TABLE IF NOT EXISTS classes (
 
     FOREIGN KEY (dept_id) REFERENCES depts(id) ON DELETE CASCADE,
     UNIQUE(dept_id, year, division)
-)
+);
 
 CREATE TABLE IF NOT EXISTS proffs (
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS proffs (
     name VARCHAR(100),
 
     FOREIGN KEY (dept_id) REFERENCES depts(id) ON DELETE CASCADE
-)
+);
 
 CREATE TABLE IF NOT EXISTS subs(
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -45,7 +45,7 @@ CREATE TABLE IF NOT EXISTS subs(
     sem TINYINT,
 
     FOREIGN KEY (dept_id) REFERENCES depts(id) ON DELETE CASCADE
-)
+);
 
 CREATE TABLE IF NOT EXISTS class_linkings(
     id INT PRIMARY KEY AUTO_INCREMENT,
@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS class_linkings(
     FOREIGN KEY (sub_id) REFERENCES subs(id) ON DELETE CASCADE,
     FOREIGN KEY (proff_id) REFERENCES proffs(id) ON DELETE CASCADE,
     UNIQUE(class_id, sub_id)
-)
+);
 
 -- INSERT INTO depts (code)
 -- VALUES  ('AIML'), ('CS'), ('DS'); 
