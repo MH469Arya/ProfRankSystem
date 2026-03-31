@@ -174,10 +174,6 @@ export default function QRGenerator() {
       const BASE_URL = "http://202.179.85.68:9000";
       const generatedUrl = `${BASE_URL}/v?session=${sessionId}`;
 
-      // setQrUrl(generatedUrl);
-      // setTimeLeft(data.remaining_seconds);
-      // setSessionActive(true);
-      // setSessionId(sessionId);
       setQrUrl(generatedUrl);
       setTimeLeft(data.remaining_seconds);
       setEndTime(Date.now() + data.remaining_seconds * 1000);

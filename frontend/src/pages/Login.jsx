@@ -10,10 +10,33 @@ export default function Login() {
   const [resetMsg, setResetMsg] = useState("");
   const { login } = useAuth();
   const navigate = useNavigate();
+  const [isSending, setIsSending] = useState(false);
 
-  const handleResetPassword = (e) => {
+  const handleResetPassword = async (e) => {
     e.preventDefault();
-    setResetMsg("reset password mail is sent to principal's mail id");
+
+    if (isSending) return; // prevent spam
+
+    setIsSending(true);
+    setResetMsg("Sending reset email...");
+
+    try {
+      const res = await fetch("/api/forgot-password", {
+        method: "POST",
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        setResetMsg("Reset password email sent successfully");
+      } else {
+        setResetMsg(data.message || "Failed to send email");
+      }
+    } catch (err) {
+      setResetMsg("Server error. Try again later.");
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -92,14 +115,27 @@ export default function Login() {
             click{" "}
             <button
               onClick={handleResetPassword}
-              className="font-bold underline hover:text-black transition-colors"
+              disabled={isSending}
+              className={`font-bold underline transition-colors ${
+                isSending
+                  ? "text-gray-400 cursor-not-allowed"
+                  : "hover:text-black"
+              }`}
             >
-              here
+              {isSending ? "sending..." : "here"}
             </button>{" "}
             to reset password for principal
           </p>
           {resetMsg && (
-            <p className="mt-4 p-2 bg-gray-50 border border-gray-200 font-bold text-gray-800">
+            <p
+              className={`mt-4 p-2 border text-sm font-bold text-center ${
+                resetMsg.includes("successfully")
+                  ? "bg-green-50 border-green-400 text-green-700"
+                  : resetMsg.includes("Sending")
+                    ? "bg-yellow-50 border-yellow-400 text-yellow-700"
+                    : "bg-red-50 border-red-400 text-red-700"
+              }`}
+            >
               {resetMsg}
             </p>
           )}

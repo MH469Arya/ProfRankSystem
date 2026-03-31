@@ -8,7 +8,7 @@ export default defineConfig({
     proxy: {
       // Proxy all requests starting with '/api' to your backend
       '/api': {
-        target: 'http://localhost:5000',  // Your backend runs here locally
+        target: 'http://localhost:9000',  // Your backend runs here locally
         changeOrigin: true,               // Changes the origin header to match the target (avoids some CORS issues)
         secure: false,                    // Since you're using HTTP, not HTTPS
         // Optional rewrite: If your backend routes are exactly '/api/...', this keeps it the same

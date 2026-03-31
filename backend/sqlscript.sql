@@ -1,4 +1,4 @@
--- Active: 1758969651640@@127.0.0.1@3306@prs_database
+-- Active: 1758452166660@@127.0.0.1@3306@prs_database
 
 DROP DATABASE prs_database;
 CREATE DATABASE prs_database;
@@ -149,7 +149,15 @@ CREATE TABLE voting_results (
     rankings JSON,
     submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
-    FOREIGN KEY (session_id) REFERENCES voting_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (session_id) REFERENCES voting_sessions(id) ON DELETE CASCADE
+);
 
-    UNIQUE KEY unique_vote (session_id, device_hash)
+CREATE TABLE voting_tokens (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  session_id INT,
+  token VARCHAR(255),
+  device_hash VARCHAR(255),
+  used BOOLEAN DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE unique_device_session (session_id, device_hash)
 );

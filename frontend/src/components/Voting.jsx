@@ -4,7 +4,7 @@ import { DragDropContext, Droppable, Draggable } from "@hello-pangea/dnd";
 import { Button } from "./ui/SharedComponents";
 
 export default function Voting() {
-  //const API_BASE = `${window.location.protocol}//${window.location.hostname}:9000`;
+  //const API_BASE = `${window.location.protocol}//${window.location.hostname}:9000`; //remove this for production
   const [searchParams] = useSearchParams();
   console.log("Voting page loaded");
   console.log("Full URL:", window.location.href);
@@ -48,43 +48,35 @@ export default function Voting() {
           return;
         }
 
-        const voteSessionId = localStorage.getItem(`voteSession_${sessionId}`);
-
         const session = await sessionRes.json();
 
         const fingerprint = generateFingerprint();
-        const deviceCheck = await fetch(`/api/check_device`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            session_id: sessionId,
-            fingerprint: fingerprint,
-          }),
-        });
 
-        const deviceResult = await deviceCheck.json();
+        let voteToken = localStorage.getItem(`vote_token_${sessionId}`);
 
-        if (deviceResult.already_voted) {
-          setStatus("already_voted");
-          return;
-        }
-
-        if (voteSessionId) {
-          const check = await fetch(`/api/check_vote`, {
+        if (!voteToken) {
+          const initRes = await fetch(`/api/init_vote`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              vote_session_id: voteSessionId,
               session_id: sessionId,
+              fingerprint,
             }),
           });
 
-          const result = await check.json();
+          const initData = await initRes.json();
 
-          if (result.has_voted) {
+          if (initData.already_voted) {
             setStatus("already_voted");
             return;
           }
+
+          voteToken = initData.vote_token;
+          if (!voteToken) {
+            setStatus("invalid");
+            return;
+          }
+          localStorage.setItem(`vote_token_${sessionId}`, voteToken);
         }
 
         const div = session.division;
@@ -116,7 +108,7 @@ export default function Voting() {
 
         setEndTime(Date.now() + seconds * 1000); // add this line
         setAvailableTeachers(teachers);
-        setRemainingTime(seconds);
+        //setRemainingTime(seconds);
         setStatus("valid");
       } catch (err) {
         console.error(err);
@@ -252,6 +244,7 @@ export default function Voting() {
 
     const fingerprint = generateFingerprint();
     try {
+      const voteToken = localStorage.getItem(`vote_token_${sessionId}`);
       const response = await fetch(`/api/vote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -259,17 +252,20 @@ export default function Voting() {
           class_session: sessionId,
           rankings: rankingIds,
           fingerprint: fingerprint,
+          vote_token: voteToken,
         }),
       });
 
       if (response.ok) {
         const data = await response.json();
-        // Store the vote_session_id in localStorage, keyed by class_session
-        localStorage.setItem(`voteSession_${sessionId}`, data.vote_session_id);
         setStatus("submitted");
       } else {
         const errData = await response.json();
-        alert(errData.message || "Failed to submit vote");
+        if (errData.message === "You can only vote once") {
+          setStatus("already_voted");
+        } else {
+          alert(errData.message || "Failed to submit vote");
+        }
       }
     } catch (error) {
       console.error("Submission error:", error);

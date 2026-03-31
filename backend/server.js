@@ -10,9 +10,11 @@ const { v4: uuidv4 } = require("uuid");
 const crypto = require("crypto");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
+const nodemailer = require("nodemailer");
 
 const app = express();
 const cors = require("cors");
+const resetCooldown = new Map();
 
 app.use(
   cors({
@@ -28,6 +30,22 @@ const db = mysql.createConnection({
   user: process.env.DB_USER,
   password: process.env.DB_PASS,
   database: process.env.DB_NAME,
+});
+
+const transporter = nodemailer.createTransport({
+  service: "gmail",
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+transporter.verify((err, success) => {
+  if (err) {
+    console.error("Email config error:", err);
+  } else {
+    console.log("Email server ready");
+  }
 });
 
 function generatePassword() {
@@ -290,6 +308,43 @@ app.post("/api/change-password", authenticate, async (req, res) => {
     console.error(err);
     res.status(500).json({ message: "Server error" });
   }
+});
+
+//reset pricipal password
+app.post("/api/forgot-password", async (req, res) => {
+  const now = Date.now();
+  const last = resetCooldown.get("principal");
+
+  if (last && now - last < 60000) {
+    return res.status(429).json({
+      message: "Please wait before requesting again",
+    });
+  }
+
+  const newPassword = crypto.randomBytes(4).toString("hex");
+  const hash = await bcrypt.hash(newPassword, 10);
+
+  await transporter.sendMail({
+    from: `"PRS System" <${process.env.EMAIL_USER}>`,
+    to: process.env.PRINCIPAL_EMAIL,
+    subject: "PRS Password Reset",
+    html: `
+    <h3>Password Reset Successful</h3>
+    <p>Your new login password is:</p>
+    <h2>${newPassword}</h2>
+  `,
+  });
+  
+  db.query(
+    `UPDATE users SET password_hash = ? WHERE role = 'SUPER_ADMIN'`,
+    [hash],
+    (err) => {
+      if (err) return res.status(500).json({ message: "DB error" });
+
+      res.json({ message: "New password sent to principal email" });
+    },
+  );
+  resetCooldown.set("principal", now);
 });
 
 //fetch deartment subs
@@ -799,6 +854,7 @@ app.post("/api/voting-sessions", authenticate, (req, res) => {
     // GET CURRENT CLASS LINKINGS
     const snapshotSql = `
       SELECT 
+        cl.id AS linking_id,
         p.id AS teacher_id,
         p.name AS teacher,
         s.name AS subject
@@ -823,6 +879,7 @@ app.post("/api/voting-sessions", authenticate, (req, res) => {
       }
 
       const snapshot = rows2.map((r) => ({
+        linking_id: r.linking_id,
         teacher_id: r.teacher_id,
         teacher: r.teacher,
         subject: r.subject,
@@ -874,6 +931,79 @@ app.post("/api/voting-sessions/:id/expire", authenticate, (req, res) => {
     }
 
     res.json({ message: "Session expired" });
+  });
+});
+
+app.post("/api/init_vote", (req, res) => {
+  const { session_id, fingerprint } = req.body;
+
+  if (!session_id || !fingerprint) {
+    return res.status(400).json({ message: "Missing data" });
+  }
+
+  const deviceHash = crypto
+    .createHash("sha256")
+    .update(fingerprint)
+    .digest("hex");
+
+  // Check if already voted
+  const checkSql = `
+    SELECT id FROM voting_results
+    WHERE session_id = ? AND device_hash = ?
+    LIMIT 1
+  `;
+
+  db.query(checkSql, [session_id, deviceHash], (err, rows) => {
+    if (err) return res.status(500).json({ message: "DB error" });
+
+    if (rows.length > 0) {
+      return res.json({ already_voted: true });
+    }
+
+    // CHECK EXISTING TOKEN
+    const existingTokenSql = `
+      SELECT token FROM voting_tokens
+      WHERE session_id = ? AND device_hash = ? AND used = FALSE
+      LIMIT 1
+    `;
+
+    db.query(existingTokenSql, [session_id, deviceHash], (err2, existing) => {
+      if (err2) return res.status(500).json({ message: "DB error" });
+
+      if (existing.length > 0) {
+        return res.json({
+          already_voted: false,
+          vote_token: existing[0].token,
+        });
+      }
+
+      // CREATE NEW TOKEN
+      const token = uuidv4();
+
+      const insertSql = `
+        INSERT INTO voting_tokens (session_id, token, device_hash)
+        VALUES (?, ?, ?)
+      `;
+
+      db.query(insertSql, [session_id, token, deviceHash], (err3) => {
+        if (err3) {
+          // 🔥 HANDLE DUPLICATE (rare but safe)
+          if (err3.code === "ER_DUP_ENTRY") {
+            return res.json({
+              already_voted: false,
+              vote_token: null,
+            });
+          }
+
+          return res.status(500).json({ message: "DB error" });
+        }
+
+        res.json({
+          already_voted: false,
+          vote_token: token,
+        });
+      });
+    });
   });
 });
 
@@ -941,56 +1071,67 @@ app.post("/api/vote", async (req, res) => {
       return res.status(403).json({ message: "Maximum votes reached" });
     }
 
-    const duplicateCheck = `SELECT id
-          FROM voting_results
-          WHERE session_id = ?
-          AND device_hash = ?
-          LIMIT 1
-            `;
+    const { vote_token } = req.body;
 
-    db.query(duplicateCheck, [sessionId, deviceHash], (err2, rows) => {
-      if (err2) {
-        return res.status(500).json({ message: "DB error" });
-      }
+    const tokenCheckSql = `
+  SELECT * FROM voting_tokens
+  WHERE token = ?
+  AND session_id = ?
+  AND device_hash = ?
+  AND used = FALSE
+  LIMIT 1
+`;
 
-      if (rows.length > 0) {
-        return res.status(403).json({
-          message: "Device already voted",
-        });
-      }
+    db.query(
+      tokenCheckSql,
+      [vote_token, sessionId, deviceHash],
+      (errToken, tokenRows) => {
+        if (errToken) return res.status(500).json({ message: "DB error" });
 
-      const insertSql = `
+        if (tokenRows.length === 0) {
+          return res.status(403).json({ message: "You can only vote once" });
+        }
+
+        const insertSql = `
           INSERT INTO voting_results
           (session_id, vote_session_id, device_hash, rankings)
           VALUES (?, ?, ?, ?)
         `;
 
-      db.query(
-        insertSql,
-        [sessionId, voteSessionId, deviceHash, JSON.stringify(rankings)],
-        (err3) => {
-          if (err3) {
-            console.error(err3);
-            return res
-              .status(500)
-              .json({ message: "Database error during voting" });
-          }
+        db.query(
+          insertSql,
+          [sessionId, voteSessionId, deviceHash, JSON.stringify(rankings)],
+          (err3) => {
+            if (err3) {
+              console.error(err3);
+              return res
+                .status(500)
+                .json({ message: "Database error during voting" });
+            }
 
-          const updateSql = `
+            const updateSql = `
           UPDATE voting_sessions
           SET votes_cast = votes_cast + 1
           WHERE id = ?
         `;
 
-          db.query(updateSql, [sessionId]);
+            db.query(updateSql, [sessionId]);
 
-          res.json({
-            message: "Vote cast successfully",
-            vote_session_id: voteSessionId,
-          });
-        },
-      );
-    });
+            // MARK TOKEN USED
+            if (!err3) {
+              db.query("UPDATE voting_tokens SET used = TRUE WHERE token = ?", [
+                vote_token,
+              ]);
+            }
+
+            res.json({
+              message: "Vote cast successfully",
+              vote_session_id: voteSessionId,
+            });
+          },
+        );
+      },
+    );
   });
 });
 
@@ -1024,65 +1165,6 @@ app.get("/api/voting-sessions/active", authenticate, (req, res) => {
     res.json({
       active: true,
       session: results[0],
-    });
-  });
-});
-
-app.post("/api/check_vote", (req, res) => {
-  const { vote_session_id, session_id } = req.body;
-
-  if (!vote_session_id || !session_id) {
-    return res.status(400).json({ message: "Missing session details" });
-  }
-
-  const sql = `
-    SELECT id
-    FROM voting_results
-    WHERE vote_session_id = ?
-    AND session_id = ?
-    LIMIT 1
-  `;
-
-  db.query(sql, [vote_session_id, session_id], (err, results) => {
-    if (err) {
-      console.error("Check Vote Error:", err.message);
-      return res.status(500).json({ message: "DB error checking vote" });
-    }
-
-    res.json({
-      has_voted: results.length > 0,
-    });
-  });
-});
-
-//check device hash
-app.post("/api/check_device", (req, res) => {
-  const { session_id, fingerprint } = req.body;
-
-  if (!session_id || !fingerprint) {
-    return res.status(400).json({ message: "Missing data" });
-  }
-
-  const deviceHash = crypto
-    .createHash("sha256")
-    .update(fingerprint)
-    .digest("hex");
-
-  const sql = `
-    SELECT id
-    FROM voting_results
-    WHERE session_id = ?
-    AND device_hash = ?
-    LIMIT 1
-  `;
-
-  db.query(sql, [session_id, deviceHash], (err, rows) => {
-    if (err) {
-      return res.status(500).json({ message: "DB error" });
-    }
-
-    res.json({
-      already_voted: rows.length > 0,
     });
   });
 });
@@ -1153,7 +1235,8 @@ app.get("/api/teachers", (req, res) => {
         : rows[0].ts_snap;
 
     const teachers = snapshot.map((t) => ({
-      id: t.teacher_id,
+      id: t.linking_id,
+      teacher_id: t.teacher_id,
       name: t.teacher,
       subject: t.subject,
     }));
@@ -1254,7 +1337,7 @@ app.get("/api/results", (req, res) => {
 
         const snapshotMap = {};
         snapshot.forEach((item) => {
-          snapshotMap[item.teacher_id] = item;
+          snapshotMap[item.linking_id] = item;
         });
 
         const scoreMap = {};
@@ -1267,27 +1350,29 @@ app.get("/api/results", (req, res) => {
 
           const totalTeachers = rankingArray.length;
 
-          rankingArray.forEach((teacherId, index) => {
+          rankingArray.forEach((linkingId, index) => {
             const points = totalTeachers - index - 1;
 
-            if (!scoreMap[teacherId]) {
-              scoreMap[teacherId] = 0;
+            if (!scoreMap[linkingId]) {
+              scoreMap[linkingId] = 0;
             }
 
-            scoreMap[teacherId] += points;
+            scoreMap[linkingId] += points;
           });
         });
 
         const sortedTeachers = Object.entries(scoreMap)
-          .map(([teacherId, score]) => ({
-            teacherId: parseInt(teacherId),
+          .map(([linkingId, score]) => ({
+            linkingId: Number(linkingId),
             score,
           }))
           .sort((a, b) => b.score - a.score);
 
         const finalRanking = sortedTeachers.map((teacher, index) => {
-          const snap = snapshotMap[teacher.teacherId];
+          const snap = snapshotMap[teacher.linkingId];
 
+          console.log("SNAPSHOT MAP KEYS:", Object.keys(snapshotMap));
+          console.log("LOOKING FOR:", teacher.linkingId);
           return {
             rank: index + 1,
             teacher: snap?.teacher || "Unknown",
@@ -1454,7 +1539,7 @@ app.get("/api/reports/class", (req, res) => {
 
         const snapshotMap = {};
         snapshot.forEach((item) => {
-          snapshotMap[item.teacher_id] = item;
+          snapshotMap[item.linking_id] = item;
         });
 
         const scoreMap = {};
@@ -1467,20 +1552,20 @@ app.get("/api/reports/class", (req, res) => {
 
           const totalTeachers = rankingArray.length;
 
-          rankingArray.forEach((teacherId, index) => {
+          rankingArray.forEach((linkingId, index) => {
             const points = totalTeachers - index - 1;
 
-            if (!scoreMap[teacherId]) {
-              scoreMap[teacherId] = 0;
+            if (!scoreMap[linkingId]) {
+              scoreMap[linkingId] = 0;
             }
 
-            scoreMap[teacherId] += points;
+            scoreMap[linkingId] += points;
           });
         });
 
         const sortedTeachers = Object.entries(scoreMap)
-          .map(([teacherId, score]) => ({
-            teacherId: parseInt(teacherId),
+          .map(([linkingId, score]) => ({
+            teacherId: parseInt(linkingId),
             score,
           }))
           .sort((a, b) => b.score - a.score);
@@ -1585,19 +1670,19 @@ app.get("/api/reports/class", (req, res) => {
         doc.moveDown(3);
 
         doc
-    .font("Helvetica-Oblique")
-    .fontSize(10)
-    .text(
-      "Rankings are computed using the Borda Count method, where higher preference yields higher points.",
-      50,
-      doc.y,
-      {
-        width: doc.page.width - 100,
-        align: "center",
-      },
-    );
+          .font("Helvetica-Oblique")
+          .fontSize(10)
+          .text(
+            "Rankings are computed using the Borda Count method, where higher preference yields higher points.",
+            50,
+            doc.y,
+            {
+              width: doc.page.width - 100,
+              align: "center",
+            },
+          );
 
-  doc.moveDown(1.5);
+        doc.moveDown(1.5);
 
         /* ---------- Tbale Generation ---------- */
         const rows = sortedTeachers.map((t, i) => {
@@ -1861,32 +1946,18 @@ app.get("/api/reports/professor", (req, res) => {
     let departments = new Set();
     let academicYears = new Set();
 
-    // let totalRank = 0;
-    // let totalSessions = 0;
-    // let bestRank = Infinity;
-    // let worstRank = 0;
-
-    // const deptRanks = {};
-    // const deptScores = {};
-    let targetProfessorId = null;
-
     for (const session of sessions) {
       const snapshot =
         typeof session.ts_snap === "string"
           ? JSON.parse(session.ts_snap)
           : session.ts_snap;
 
-      const professorEntry = snapshot.find((s) => s.teacher === professorName);
-
-      let professorId = null;
-
-      if (professorEntry) {
-        professorId = professorEntry.teacher_id;
-
-        if (!targetProfessorId) {
-          targetProfessorId = professorId;
-        }
-      }
+      const professorEntries = snapshot.filter(
+        (s) => s.teacher === professorName,
+      );
+      if (!professorEntries.length) continue;
+      const linkingIds = professorEntries.map((e) => e.linking_id);
+      const subjectsList = [...new Set(professorEntries.map((e) => e.subject))];
 
       const votes = await new Promise((resolve, reject) => {
         db.query(
@@ -1928,28 +1999,28 @@ app.get("/api/reports/professor", (req, res) => {
       const division = session.division;
       const department = division.split("-")[0];
 
+      const subjectData = linkingIds.map((linkingId) => {
+        const index = sorted.findIndex((t) => t.teacherId === linkingId);
 
-      // skip report row if professor not in this session
-      if (!professorEntry) continue;
+        const rank = index !== -1 ? index + 1 : 0;
+        const score = sorted.find((t) => t.teacherId === linkingId)?.score || 0;
 
-      const rank = sorted.findIndex((t) => t.teacherId === professorId) + 1;
+        return {
+          linkingId,
+          rank,
+          score,
+        };
+      });
 
-      const score = sorted.find((t) => t.teacherId === professorId)?.score || 0;
-
-      if (!rank) continue;
-
-      // totalRank += rank;
-      // totalSessions++;
-
-      // bestRank = Math.min(bestRank, rank);
-      // worstRank = Math.max(worstRank, rank);
+      const subjectStr = subjectsList.join(" / ");
+      const rankStr = subjectData.map((s) => s.rank).join(" / ");
+      const scoreStr = subjectData.map((s) => s.score).join(" / ");
+      const votesStr = subjectData.map(() => votes.length).join(" / ");
 
       const year = division.split("-")[1];
       const div = division.split("-")[2];
 
       const className = `${year}-${div}`.toUpperCase();
-
-      const subject = professorEntry.subject;
 
       const sessionDate = new Date(session.start_time).toLocaleDateString();
 
@@ -1967,17 +2038,17 @@ app.get("/api/reports/professor", (req, res) => {
               .toString()
               .slice(2)}`;
 
-      subjects.add(subject);
+      subjectsList.forEach((s) => subjects.add(s));
       departments.add(department);
       academicYears.add(academicYear);
 
       reportRows.push([
         department.toUpperCase(),
         className,
-        subject,
-        rank,
-        score,
-        votes.length,
+        subjectStr,
+        rankStr,
+        scoreStr,
+        votesStr,
         academicYear,
         sessionDate,
       ]);
@@ -1992,36 +2063,12 @@ app.get("/api/reports/professor", (req, res) => {
       return b[6].localeCompare(a[6]);
     });
 
-    // const avgRank = (totalRank / totalSessions).toFixed(2);
-
-    // Object.keys(deptScores).forEach((dept) => {
-    //   const ranking = Object.entries(deptScores[dept])
-    //     .map(([tid, score]) => ({
-    //       teacherId: parseInt(tid),
-    //       score,
-    //     }))
-    //     .sort((a, b) => b.score - a.score);
-
-    //   const profEntry = ranking.findIndex(
-    //     (r) => r.teacherId === targetProfessorId,
-    //   );
-
-    //   if (profEntry !== -1) {
-    //     deptRanks[dept] = profEntry + 1;
-    //   }
-    // });
-
     generateProfessorPDF({
       res,
       professorName,
       subjects: [...subjects],
       departments: [...departments],
       academicYears: [...academicYears],
-      // deptRanks,
-      // totalSessions,
-      // avgRank,
-      // bestRank,
-      // worstRank,
       rows: reportRows,
     });
   });
