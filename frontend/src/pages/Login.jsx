@@ -7,12 +7,19 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [resetMsg, setResetMsg] = useState("");
   const { login } = useAuth();
   const navigate = useNavigate();
+
+  const handleResetPassword = (e) => {
+    e.preventDefault();
+    setResetMsg("reset password mail is sent to principal's mail id");
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
+    setResetMsg("");
     setIsLoading(true);
 
     try {
@@ -74,11 +81,29 @@ export default function Login() {
           <button
             type="submit"
             disabled={isLoading}
-            className="w-full bg-black text-white p-3 font-bold uppercase hover:bg-gray-800 transition-colors disabled:bg-gray-500 rounded-none"
+            className="w-full bg-black text-white p-3 font-bold uppercase hover:bg-gray-800 transition-colors disabled:bg-gray-500 rounded-none mb-4"
           >
             {isLoading ? "Authenticating..." : "Login"}
           </button>
         </form>
+
+        <div className="mt-6 text-center text-sm">
+          <p className="text-gray-600">
+            click{" "}
+            <button
+              onClick={handleResetPassword}
+              className="font-bold underline hover:text-black transition-colors"
+            >
+              here
+            </button>{" "}
+            to reset password for principal
+          </p>
+          {resetMsg && (
+            <p className="mt-4 p-2 bg-gray-50 border border-gray-200 font-bold text-gray-800">
+              {resetMsg}
+            </p>
+          )}
+        </div>
       </div>
     </div>
   );
