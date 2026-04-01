@@ -70,6 +70,7 @@ VALUES (
     NULL
 );
 
+
 -- INSERT INTO users (username, password_hash, role, dept_id)
 -- VALUES (
 --     'aimlhod@gmail.com',

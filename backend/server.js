@@ -13,6 +13,10 @@ const fs = require("fs");
 const nodemailer = require("nodemailer");
 
 const app = express();
+app.use((req, res, next) => {
+  console.log(`Incoming ${req.method} ${req.url}`);
+  next();
+});
 const cors = require("cors");
 const resetCooldown = new Map();
 
@@ -935,6 +939,7 @@ app.post("/api/voting-sessions/:id/expire", authenticate, (req, res) => {
 });
 
 app.post("/api/init_vote", (req, res) => {
+  console.log("INIT VOTE BODY:", req.body);
   const { session_id, fingerprint } = req.body;
 
   if (!session_id || !fingerprint) {
@@ -2119,7 +2124,8 @@ setInterval(() => {
   });
 }, 5000); // every 30 seconds
 
-app.get((req, res) => {
+app.get('/*splat', (req, res) => {
+  console.log('SPA fallback hit for:', req.url);  // helpful debug
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
