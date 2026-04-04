@@ -1,6 +1,5 @@
 require("dotenv").config();
 const express = require("express");
-//const cors = require("cors");
 const mysql = require("mysql2");
 const path = require("path");
 const bcrypt = require("bcrypt");
@@ -18,6 +17,7 @@ app.use((req, res, next) => {
   next();
 });
 const cors = require("cors");
+const { types } = require("util");
 const resetCooldown = new Map();
 
 app.use(
@@ -52,9 +52,69 @@ transporter.verify((err, success) => {
   }
 });
 
+//funcs
 function generatePassword() {
   return crypto.randomBytes(2).toString("hex");
 }
+
+function compBordaScores(votes) {
+  const S = {};
+  const V = {};
+
+  votes.forEach((vote) => {
+    const rankingArray =
+      typeof vote.rankings === "string"
+        ? JSON.parse(vote.rankings)
+        : vote.rankings;
+
+    const totalTeachers = rankingArray.length;
+
+    rankingArray.forEach((linkingId, index) => {
+      const points = totalTeachers - index - 1;
+
+      if (!S[linkingId]) {
+        S[linkingId] = 0;
+        V[linkingId] = 0;
+      }
+
+      S[linkingId] += points;
+      V[linkingId] += 1;
+    });
+  });
+  return { S, V };
+}
+
+function compWeightedBorda(S, V) {
+  const ids = Object.keys(S);
+
+  const x = {};
+  ids.forEach((id) => {
+    x[id] = S[id] / V[id];
+  });
+
+  const C = ids.reduce((sum, id) => sum + x[id], 0) / ids.length;
+
+  const Vs = Object.values(V).sort((a, b) => a - b);
+
+  let median;
+  const n = Vs.length;
+  if (n % 2 === 0) {
+    median = (Vs[n / 2 - 1] + Vs[n / 2]) / 2;
+  } else {
+    median = Vs[Math.floor(n / 2)];
+  }
+
+  const m = 0.5 * median;
+
+  const Ws = {};
+
+  ids.forEach((id) => {
+    Ws[id] = (S[id] + m * C) / (V[id] + m);
+  });
+
+  return Ws;
+}
+
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
@@ -338,7 +398,7 @@ app.post("/api/forgot-password", async (req, res) => {
     <h2>${newPassword}</h2>
   `,
   });
-  
+
   db.query(
     `UPDATE users SET password_hash = ? WHERE role = 'SUPER_ADMIN'`,
     [hash],
@@ -1345,44 +1405,38 @@ app.get("/api/results", (req, res) => {
           snapshotMap[item.linking_id] = item;
         });
 
-        const scoreMap = {};
+        const { S, V } = compBordaScores(votes);
+        const W = compWeightedBorda(S, V);
+        console.log("DEBUG RESULTS:", { S, V, W });
 
-        votes.forEach((vote) => {
-          const rankingArray =
-            typeof vote.rankings === "string"
-              ? JSON.parse(vote.rankings)
-              : vote.rankings;
-
-          const totalTeachers = rankingArray.length;
-
-          rankingArray.forEach((linkingId, index) => {
-            const points = totalTeachers - index - 1;
-
-            if (!scoreMap[linkingId]) {
-              scoreMap[linkingId] = 0;
-            }
-
-            scoreMap[linkingId] += points;
-          });
-        });
-
-        const sortedTeachers = Object.entries(scoreMap)
+        const sortedTeachers = Object.entries(W)
           .map(([linkingId, score]) => ({
             linkingId: Number(linkingId),
             score,
           }))
           .sort((a, b) => b.score - a.score);
 
+        let prevScore = null;
+        let prevRank = 0;
+
         const finalRanking = sortedTeachers.map((teacher, index) => {
+          let rank;
+
+          if (teacher.score === prevScore) {
+            rank = prevRank;
+          } else {
+            rank = index + 1;
+            prevRank = rank;
+            prevScore = teacher.score;
+          }
+
           const snap = snapshotMap[teacher.linkingId];
 
-          console.log("SNAPSHOT MAP KEYS:", Object.keys(snapshotMap));
-          console.log("LOOKING FOR:", teacher.linkingId);
           return {
-            rank: index + 1,
+            rank,
             teacher: snap?.teacher || "Unknown",
             subject: snap?.subject || "Unknown",
-            score: teacher.score,
+            score: Number(teacher.score.toFixed(2)),
           };
         });
 
@@ -1547,30 +1601,12 @@ app.get("/api/reports/class", (req, res) => {
           snapshotMap[item.linking_id] = item;
         });
 
-        const scoreMap = {};
+        const { S, V } = compBordaScores(votes);
+        const W = compWeightedBorda(S, V);
 
-        votes.forEach((vote) => {
-          const rankingArray =
-            typeof vote.rankings === "string"
-              ? JSON.parse(vote.rankings)
-              : vote.rankings;
-
-          const totalTeachers = rankingArray.length;
-
-          rankingArray.forEach((linkingId, index) => {
-            const points = totalTeachers - index - 1;
-
-            if (!scoreMap[linkingId]) {
-              scoreMap[linkingId] = 0;
-            }
-
-            scoreMap[linkingId] += points;
-          });
-        });
-
-        const sortedTeachers = Object.entries(scoreMap)
+        const sortedTeachers = Object.entries(W)
           .map(([linkingId, score]) => ({
-            teacherId: parseInt(linkingId),
+            linkingId: Number(linkingId),
             score,
           }))
           .sort((a, b) => b.score - a.score);
@@ -1689,15 +1725,32 @@ app.get("/api/reports/class", (req, res) => {
 
         doc.moveDown(1.5);
 
+        let prevScore = null;
+        let prevRank = 0;
+
+        const rankedTeachers = sortedTeachers.map((t, index) => {
+          let rank;
+
+          if (t.score === prevScore) {
+            rank = prevRank;
+          } else {
+            rank = index + 1;
+            prevRank = rank;
+            prevScore = t.score;
+          }
+
+          return { ...t, rank };
+        });
+
         /* ---------- Tbale Generation ---------- */
-        const rows = sortedTeachers.map((t, i) => {
-          const snap = snapshotMap[t.teacherId];
+        const rows = rankedTeachers.map((t) => {
+          const snap = snapshotMap[t.linkingId];
 
           return [
-            i + 1,
+            t.rank,
             snap?.teacher || "Unknown",
             snap?.subject || "Unknown",
-            t.score,
+            Number(t.score.toFixed(2)),
           ];
         });
 
@@ -1977,24 +2030,11 @@ app.get("/api/reports/professor", (req, res) => {
 
       if (!votes.length) continue;
 
-      const scoreMap = {};
+      const { S, V } = compBordaScores(votes);
+      const W = compWeightedBorda(S, V);
+      console.log("DEBUG RESULTS:", { S, V, W });
 
-      votes.forEach((v) => {
-        const rankingArray =
-          typeof v.rankings === "string" ? JSON.parse(v.rankings) : v.rankings;
-
-        const totalTeachers = rankingArray.length;
-
-        rankingArray.forEach((tid, index) => {
-          const points = totalTeachers - index - 1;
-
-          if (!scoreMap[tid]) scoreMap[tid] = 0;
-
-          scoreMap[tid] += points;
-        });
-      });
-
-      const sorted = Object.entries(scoreMap)
+      const sorted = Object.entries(W)
         .map(([tid, score]) => ({
           teacherId: parseInt(tid),
           score,
@@ -2004,10 +2044,27 @@ app.get("/api/reports/professor", (req, res) => {
       const division = session.division;
       const department = division.split("-")[0];
 
-      const subjectData = linkingIds.map((linkingId) => {
-        const index = sorted.findIndex((t) => t.teacherId === linkingId);
+      let prevScore = null;
+      let prevRank = 0;
 
-        const rank = index !== -1 ? index + 1 : 0;
+      const rankMap = {};
+
+      sorted.forEach((t, index) => {
+        let rank;
+
+        if (t.score === prevScore) {
+          rank = prevRank;
+        } else {
+          rank = index + 1;
+          prevRank = rank;
+          prevScore = t.score;
+        }
+
+        rankMap[t.teacherId] = rank;
+      });
+
+      const subjectData = linkingIds.map((linkingId) => {
+        const rank = rankMap[linkingId] || 0;
         const score = sorted.find((t) => t.teacherId === linkingId)?.score || 0;
 
         return {
@@ -2124,8 +2181,8 @@ setInterval(() => {
   });
 }, 5000); // every 30 seconds
 
-app.get('/*splat', (req, res) => {
-  console.log('SPA fallback hit for:', req.url);  // helpful debug
+app.get("/*splat", (req, res) => {
+  console.log("SPA fallback hit for:", req.url); // helpful debug
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
