@@ -18,6 +18,7 @@ app.use((req, res, next) => {
 });
 const cors = require("cors");
 const { types } = require("util");
+const { link } = require("pdfkit/js/pdfkit.standalone");
 const resetCooldown = new Map();
 
 app.use(
@@ -70,9 +71,10 @@ function compBordaScores(votes) {
     const totalTeachers = rankingArray.length;
 
     rankingArray.forEach((linkingId, index) => {
+      linkingId = Number(linkingId);
       const points = totalTeachers - index - 1;
 
-      if (!S[linkingId]) {
+      if (S[linkingId] === undefined) {
         S[linkingId] = 0;
         V[linkingId] = 0;
       }
@@ -146,8 +148,6 @@ app.post("/api/login", (req, res) => {
     }
 
     const user = results[0];
-
-    console.log("DB HASH:", user.password_hash);
 
     const match = await bcrypt.compare(password, user.password_hash);
     console.log("MATCH:", match);
@@ -999,17 +999,23 @@ app.post("/api/voting-sessions/:id/expire", authenticate, (req, res) => {
 });
 
 app.post("/api/init_vote", (req, res) => {
-  console.log("INIT VOTE BODY:", req.body);
+  //console.log("INIT VOTE BODY:", req.body);
   const { session_id, fingerprint } = req.body;
 
   if (!session_id || !fingerprint) {
     return res.status(400).json({ message: "Missing data" });
   }
 
-  const deviceHash = crypto
-    .createHash("sha256")
-    .update(fingerprint)
-    .digest("hex");
+  // const deviceHash = crypto
+  //   .createHash("sha256")
+  //   .update(fingerprint)
+  //   .digest("hex");
+  const deviceHash = fingerprint;
+
+  // console.log("INIT:", {
+  //   session_id,
+  //   deviceHash,
+  // });
 
   // Check if already voted
   const checkSql = `
@@ -1052,7 +1058,6 @@ app.post("/api/init_vote", (req, res) => {
 
       db.query(insertSql, [session_id, token, deviceHash], (err3) => {
         if (err3) {
-          // 🔥 HANDLE DUPLICATE (rare but safe)
           if (err3.code === "ER_DUP_ENTRY") {
             return res.json({
               already_voted: false,
@@ -1082,17 +1087,11 @@ app.post("/api/vote", async (req, res) => {
   const sessionId = class_session;
 
   const voteSessionId = uuidv4();
-  const deviceHash = crypto
-    .createHash("sha256")
-    .update(fingerprint)
-    .digest("hex");
-
-  // const checkSql = `
-  //   SELECT *
-  //   FROM voting_sessions
-  //   WHERE id = ?
-  //   LIMIT 1
-  // `;
+  // const deviceHash = crypto
+  //   .createHash("sha256")
+  //   .update(fingerprint)
+  //   .digest("hex");
+  const deviceHash = fingerprint;
 
   const checkSql = `SELECT *,
       TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
@@ -1137,6 +1136,11 @@ app.post("/api/vote", async (req, res) => {
     }
 
     const { vote_token } = req.body;
+    // console.log("VOTE:", {
+    //   token: vote_token,
+    //   sessionId,
+    //   deviceHash,
+    // });
 
     const tokenCheckSql = `
   SELECT * FROM voting_tokens
@@ -1154,7 +1158,15 @@ app.post("/api/vote", async (req, res) => {
         if (errToken) return res.status(500).json({ message: "DB error" });
 
         if (tokenRows.length === 0) {
-          return res.status(403).json({ message: "You can only vote once" });
+          // console.log("INVALID TOKEN OR MISMATCH", {
+          //   token: vote_token,
+          //   sessionId,
+          //   deviceHash,
+          // });
+
+          return res
+            .status(403)
+            .json({ message: "Invalid or expired session" });
         }
 
         const insertSql = `
@@ -1344,7 +1356,7 @@ app.get("/api/academic-years", (req, res) => {
   });
 });
 
-// borda results
+//rankings results
 app.get("/api/results", (req, res) => {
   const { department, year, division, academic_year } = req.query;
 
@@ -1406,9 +1418,9 @@ app.get("/api/results", (req, res) => {
         });
 
         const { S, V } = compBordaScores(votes);
-        const W = compWeightedBorda(S, V);
-        console.log("DEBUG RESULTS:", { S, V, W });
 
+        const W = compWeightedBorda(S, V);
+   
         const sortedTeachers = Object.entries(W)
           .map(([linkingId, score]) => ({
             linkingId: Number(linkingId),
@@ -2032,7 +2044,6 @@ app.get("/api/reports/professor", (req, res) => {
 
       const { S, V } = compBordaScores(votes);
       const W = compWeightedBorda(S, V);
-      console.log("DEBUG RESULTS:", { S, V, W });
 
       const sorted = Object.entries(W)
         .map(([tid, score]) => ({

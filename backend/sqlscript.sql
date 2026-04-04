@@ -68,7 +68,11 @@ VALUES (
 );
 
 UPDATE users SET password_hash = '$2b$10$vfWJC6GowN1rmgsX46vEkuYSqTzfLY5dOHm35HmsOFmsg85KSJzM.' WHERE username = 'APPrincipal';
-DROP TABLE IF EXISTS voting_tokens;           
+
+
+DROP TABLE IF EXISTS voting_results; 
+DROP TABLE IF EXISTS voting_sessions;
+DROP TABLE IF EXISTS voting_tokens;          
 CREATE TABLE voting_sessions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     division VARCHAR(50) NOT NULL,
