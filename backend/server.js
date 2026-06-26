@@ -121,6 +121,31 @@ app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+// Returns the server's local network IP so QR codes work on mobile devices
+app.get("/api/server-url", (req, res) => {
+  const os = require("os");
+  const interfaces = os.networkInterfaces();
+  let localIp = null;
+
+  // Find the first non-loopback IPv4 address (LAN IP like 192.168.x.x or 10.x.x.x)
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        localIp = iface.address;
+        break;
+      }
+    }
+    if (localIp) break;
+  }
+
+  const port = 9000;
+  const baseUrl = localIp
+    ? `http://${localIp}:${port}`
+    : `http://localhost:${port}`;
+
+  res.json({ baseUrl });
+});
+
 //login
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
@@ -182,7 +207,7 @@ app.get("/api/departments", (req, res) => {
     FROM depts d
     LEFT JOIN users u 
       ON u.dept_id = d.id AND u.role='DEPT_ADMIN'
-    ORDER BY d.code
+    ORDER BY d.id
   `;
 
   db.query(sql, (err, results) => {
@@ -426,7 +451,7 @@ app.get("/api/subjects", authenticate, (req, res) => {
     params.push(dept);
   }
 
-  sql += " ORDER BY s.sem, s.name";
+  sql += " ORDER BY s.id";
   db.query(sql, params, (err, results) => {
     if (err) {
       console.error(err);
@@ -549,7 +574,7 @@ app.get("/api/proffs", authenticate, (req, res) => {
     FROM proffs p
     JOIN depts d ON p.dept_id = d.id
     WHERE d.code = ?
-    ORDER BY p.name
+    ORDER BY p.id
   `;
   db.query(sql, [dept], (err, results) => {
     if (err) return res.status(500).json({ message: "DB error" });
@@ -793,7 +818,7 @@ app.get("/api/classes/:id/linkings", authenticate, (req, res) => {
     JOIN subs s ON cl.sub_id = s.id
     JOIN proffs p ON cl.proff_id = p.id
     WHERE c.id = ? AND d.code = ?
-    ORDER BY s.name
+    ORDER BY cl.id
   `;
 
   db.query(sql, [id, dept], (err, results) => {
