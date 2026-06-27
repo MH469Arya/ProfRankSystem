@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useNavigate } from "react-router-dom";
 
@@ -15,6 +15,68 @@ export default function Login() {
   const [otpCode, setOtpCode] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [isConfirming, setIsConfirming] = useState(false);
+  const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
+  const otpInputRefs = Array.from({ length: 6 }, () => useRef(null));
+
+  const handleOtpDigitChange = (index, value) => {
+    // Accept only a single digit
+    const digit = value.replace(/\D/g, "").slice(-1);
+
+    const updated = [...otpDigits];
+    updated[index] = digit;
+    setOtpDigits(updated);
+
+    // Sync the combined value into otpCode for submission
+    setOtpCode(updated.join(""));
+
+    // Auto-advance to next field
+    if (digit && index < 5) {
+      otpInputRefs[index + 1].current?.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index, e) => {
+    if (e.key === "Backspace") {
+      if (otpDigits[index] === "" && index > 0) {
+        // If current field is empty, go back and clear previous
+        const updated = [...otpDigits];
+        updated[index - 1] = "";
+        setOtpDigits(updated);
+        setOtpCode(updated.join(""));
+        otpInputRefs[index - 1].current?.focus();
+      } else {
+        // Clear current field
+        const updated = [...otpDigits];
+        updated[index] = "";
+        setOtpDigits(updated);
+        setOtpCode(updated.join(""));
+      }
+    } else if (e.key === "ArrowLeft" && index > 0) {
+      otpInputRefs[index - 1].current?.focus();
+    } else if (e.key === "ArrowRight" && index < 5) {
+      otpInputRefs[index + 1].current?.focus();
+    }
+  };
+
+  const handleOtpPaste = (e) => {
+    e.preventDefault();
+    const pasted = e.clipboardData
+      .getData("text")
+      .replace(/\D/g, "")
+      .slice(0, 6);
+    if (!pasted) return;
+
+    const updated = ["", "", "", "", "", ""];
+    pasted.split("").forEach((char, i) => {
+      updated[i] = char;
+    });
+    setOtpDigits(updated);
+    setOtpCode(updated.join(""));
+
+    // Focus the field after the last pasted digit
+    const nextIndex = Math.min(pasted.length, 5);
+    otpInputRefs[nextIndex].current?.focus();
+  };
 
   const handleResetPassword = async (e) => {
     e.preventDefault();
@@ -33,7 +95,9 @@ export default function Login() {
       const data = await res.json();
 
       if (res.ok) {
-        setResetMsg("Reset password email sent successfully. Please check your inbox for the OTP.");
+        setResetMsg(
+          "Reset password email sent successfully. Please check your inbox for the OTP.",
+        );
       } else {
         setResetMsg(data.message || "Failed to send email");
       }
@@ -72,7 +136,9 @@ export default function Login() {
           setResetMsg("");
         }, 3000);
       } else {
-        setResetMsg(data.message || "Failed to reset password. Please check your OTP.");
+        setResetMsg(
+          data.message || "Failed to reset password. Please check your OTP.",
+        );
       }
     } catch {
       setResetMsg("Server error. Try again later.");
@@ -120,22 +186,40 @@ export default function Login() {
               Principal Password Reset
             </h2>
             <p className="text-xs text-gray-500 text-center">
-              An OTP has been requested for the principal account. Please check the registered email.
+              An OTP has been requested for the principal account. Please check
+              the registered email.
             </p>
 
             <div>
               <label className="block text-sm font-bold uppercase mb-2">
                 Enter OTP
               </label>
-              <input
-                type="text"
-                required
-                maxLength={6}
-                className="w-full p-3 border border-gray-400 focus:border-black focus:outline-none transition-colors rounded-none font-mono text-center tracking-widest text-lg"
-                value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ""))}
-                placeholder="000000"
-              />
+              <div
+                className="flex gap-2 justify-between"
+                onPaste={handleOtpPaste}
+              >
+                {otpDigits.map((digit, index) => (
+                  <input
+                    key={index}
+                    ref={otpInputRefs[index]}
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) =>
+                      handleOtpDigitChange(index, e.target.value)
+                    }
+                    onKeyDown={(e) => handleOtpKeyDown(index, e)}
+                    className={`w-12 h-12 text-center text-xl font-bold font-mono border-2 rounded-none focus:outline-none transition-colors
+                      ${
+                        digit
+                          ? "border-black bg-white text-black"
+                          : "border-gray-300 bg-white text-black"
+                      }
+                      focus:border-black`}
+                  />
+                ))}
+              </div>
             </div>
 
             <div>
@@ -164,17 +248,24 @@ export default function Login() {
             <div className="flex justify-between items-center text-xs mt-4">
               <button
                 type="button"
-                onClick={handleResetPassword}
+                onClick={(e) => {
+                  setOtpDigits(["", "", "", "", "", ""]);
+                  setOtpCode("");
+                  otpInputRefs[0].current?.focus();
+                  handleResetPassword(e);
+                }}
                 disabled={isSending}
                 className="font-bold underline hover:text-black transition-colors"
               >
                 {isSending ? "Resending..." : "Resend OTP"}
               </button>
-              
+
               <button
                 type="button"
                 onClick={() => {
                   setIsResetting(false);
+                  setOtpDigits(["", "", "", "", "", ""]);
+                  setOtpCode("");
                   setError("");
                   setResetMsg("");
                 }}
@@ -248,9 +339,11 @@ export default function Login() {
           <div className="mt-4">
             <p
               className={`p-2 border text-sm font-bold text-center ${
-                resetMsg.includes("successfully") || resetMsg.includes("Redirecting")
+                resetMsg.includes("successfully") ||
+                resetMsg.includes("Redirecting")
                   ? "bg-green-50 border-green-400 text-green-700"
-                  : resetMsg.includes("Sending") || resetMsg.includes("Verifying")
+                  : resetMsg.includes("Sending") ||
+                      resetMsg.includes("Verifying")
                     ? "bg-yellow-50 border-yellow-400 text-yellow-700"
                     : "bg-red-50 border-red-400 text-red-700"
               }`}

@@ -142,6 +142,39 @@ export default function QRGenerator() {
       document.removeEventListener("visibilitychange", handleVisibility);
   }, [endTime]);
 
+  const handleStopSession = async () => {
+    if (
+      !window.confirm(
+        "Are you sure you want to stop the current voting session?",
+      )
+    )
+      return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/voting-sessions/${sessionId}/expire`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      if (res.ok) {
+        setSessionActive(false);
+        setTimeLeft(0);
+        setQrUrl("");
+        setSessionId(null);
+        setEndTime(null);
+      } else {
+        const err = await res.json();
+        alert(err.message || "Failed to stop session");
+      }
+    } catch (err) {
+      console.error("Stop session failed:", err);
+      alert("Server error. Could not stop session.");
+    }
+  };
+
   const handleGenerate = async () => {
     if (!dept || !classroom) return;
 
@@ -172,8 +205,12 @@ export default function QRGenerator() {
       const data = await res.json();
       const sessionId = data.session_id;
 
-      const BASE_URL = "http://192.168.0.195:9000";
-      const generatedUrl = `${BASE_URL}/v?session=${sessionId}`;
+      // const BASE_URL = "http://192.168.0.195:9000"; //for production enable this
+      // const generatedUrl = `${BASE_URL}/v?session=${sessionId}`;
+
+      const serverRes = await fetch("/api/server-url");
+      const serverData = await serverRes.json();
+      const generatedUrl = `${serverData.baseUrl}/v?session=${sessionId}`;
 
       setQrUrl(generatedUrl);
       setTimeLeft(data.remaining_seconds);
@@ -199,7 +236,6 @@ export default function QRGenerator() {
       <h2 className="text-lg font-bold uppercase tracking-wide mb-6 text-center">
         Generate Voting Session
       </h2>
-
       <div className="space-y-4 mb-8">
         <div>
           <label className="block text-sm font-bold uppercase mb-1">
@@ -276,7 +312,6 @@ export default function QRGenerator() {
               : "Generate QR Code (5 min)"}
         </Button>
       </div>
-
       {sessionActive && timeLeft > 0 && (
         <div className="flex flex-col items-center justify-center p-6 bg-gray-50 border border-gray-200">
           <QRCodeSVG
@@ -292,12 +327,23 @@ export default function QRGenerator() {
           <div className="mt-4 text-2xl font-bold font-mono text-black">
             Time Remaining: {formatTime(timeLeft)}
           </div>
+          <button
+            onClick={handleStopSession}
+            className="mt-6 w-full border border-black bg-white text-black text-sm font-bold uppercase tracking-wider px-4 py-2 hover:bg-black hover:text-white transition-colors duration-200"
+          >
+            Stop Session
+          </button>
         </div>
       )}
-
-      {sessionId && timeLeft === 0 && !sessionActive && (
+      {!sessionActive && timeLeft === 0 && !sessionId && (
         <p className="text-center text-sm text-gray-500 mt-4">
-          Session expired. Generate a new QR code.
+          The QR will be active only for 5 mins.
+        </p>
+      )}
+
+      {!sessionActive && timeLeft === 0 && sessionId && (
+        <p className="text-center text-sm text-gray-500 mt-4">
+          Session ended. Generate a new QR code.
         </p>
       )}
     </div>

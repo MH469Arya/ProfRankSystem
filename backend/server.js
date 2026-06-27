@@ -20,6 +20,7 @@ const cors = require("cors");
 const { types } = require("util");
 const { link } = require("pdfkit/js/pdfkit.standalone");
 const resetCooldown = new Map();
+const principalOtpStore = { otp: null, expiresAt: null };
 
 app.use(
   cors({
@@ -400,6 +401,42 @@ app.post("/api/change-password", authenticate, async (req, res) => {
 });
 
 //reset pricipal password
+// app.post("/api/forgot-password", async (req, res) => {
+//   const now = Date.now();
+//   const last = resetCooldown.get("principal");
+
+//   if (last && now - last < 60000) {
+//     return res.status(429).json({
+//       message: "Please wait before requesting again",
+//     });
+//   }
+
+//   const newPassword = crypto.randomBytes(4).toString("hex");
+//   const hash = await bcrypt.hash(newPassword, 10);
+
+//   await transporter.sendMail({
+//     from: `"PRS System" <${process.env.EMAIL_USER}>`,
+//     to: process.env.PRINCIPAL_EMAIL,
+//     subject: "PRS Password Reset",
+//     html: `
+//     <h3>Password Reset Successful</h3>
+//     <p>Your new login password is:</p>
+//     <h2>${newPassword}</h2>
+//   `,
+//   });
+
+//   db.query(
+//     `UPDATE users SET password_hash = ? WHERE role = 'SUPER_ADMIN'`,
+//     [hash],
+//     (err) => {
+//       if (err) return res.status(500).json({ message: "DB error" });
+
+//       res.json({ message: "New password sent to principal email" });
+//     },
+//   );
+//   resetCooldown.set("principal", now);
+// });
+
 app.post("/api/forgot-password", async (req, res) => {
   const now = Date.now();
   const last = resetCooldown.get("principal");
@@ -410,30 +447,83 @@ app.post("/api/forgot-password", async (req, res) => {
     });
   }
 
-  const newPassword = crypto.randomBytes(4).toString("hex");
-  const hash = await bcrypt.hash(newPassword, 10);
-
-  await transporter.sendMail({
-    from: `"PRS System" <${process.env.EMAIL_USER}>`,
-    to: process.env.PRINCIPAL_EMAIL,
-    subject: "PRS Password Reset",
-    html: `
-    <h3>Password Reset Successful</h3>
-    <p>Your new login password is:</p>
-    <h2>${newPassword}</h2>
-  `,
-  });
-
-  db.query(
-    `UPDATE users SET password_hash = ? WHERE role = 'SUPER_ADMIN'`,
-    [hash],
-    (err) => {
-      if (err) return res.status(500).json({ message: "DB error" });
-
-      res.json({ message: "New password sent to principal email" });
-    },
-  );
   resetCooldown.set("principal", now);
+
+  const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+  principalOtpStore.otp = otp;
+  principalOtpStore.expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
+
+  try {
+    await transporter.sendMail({
+      from: `"PRS System" <${process.env.EMAIL_USER}>`,
+      to: process.env.PRINCIPAL_EMAIL,
+      subject: "PRS Password Reset OTP",
+      html: `
+        <h3>Password Reset OTP</h3>
+        <p>Your OTP for resetting the principal account password is:</p>
+        <h2 style="letter-spacing: 8px;">${otp}</h2>
+        <p>This OTP is valid for <strong>5 minutes</strong>.</p>
+        <p>If you did not request this, please ignore this email.</p>
+      `,
+    });
+
+    res.json({ message: "OTP sent to principal email" });
+  } catch (err) {
+    console.error("Email send error:", err);
+    principalOtpStore.otp = null;
+    principalOtpStore.expiresAt = null;
+    res.status(500).json({ message: "Failed to send OTP email" });
+  }
+});
+
+app.post("/api/reset-password-otp", async (req, res) => {
+  const { otp, newPassword } = req.body;
+
+  if (!otp || !newPassword) {
+    return res.status(400).json({ message: "OTP and new password are required" });
+  }
+
+  if (!principalOtpStore.otp) {
+    return res.status(400).json({ message: "No OTP was requested. Please request a new one." });
+  }
+
+  if (Date.now() > principalOtpStore.expiresAt) {
+    principalOtpStore.otp = null;
+    principalOtpStore.expiresAt = null;
+    return res.status(400).json({ message: "OTP has expired. Please request a new one." });
+  }
+
+  if (otp.trim() !== principalOtpStore.otp) {
+    return res.status(400).json({ message: "Invalid OTP. Please try again." });
+  }
+
+  if (newPassword.length < 4) {
+    return res.status(400).json({ message: "Password must be at least 4 characters" });
+  }
+
+  try {
+    const hash = await bcrypt.hash(newPassword, 10);
+
+    db.query(
+      `UPDATE users SET password_hash = ? WHERE role = 'SUPER_ADMIN'`,
+      [hash],
+      (err) => {
+        if (err) {
+          console.error(err);
+          return res.status(500).json({ message: "DB error while updating password" });
+        }
+
+        // Clear OTP after successful reset
+        principalOtpStore.otp = null;
+        principalOtpStore.expiresAt = null;
+
+        res.json({ message: "Password reset successfully" });
+      }
+    );
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 //fetch deartment subs
@@ -1238,6 +1328,40 @@ app.post("/api/vote", async (req, res) => {
 });
 
 //fetch active qr sessions
+// app.get("/api/voting-sessions/active", authenticate, (req, res) => {
+//   const { role } = req.user;
+
+//   if (role !== "SUPER_ADMIN") {
+//     return res.status(403).json({ message: "Unauthorized" });
+//   }
+
+//   const sql = `SELECT *,
+//         TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+//         FROM voting_sessions
+//         WHERE is_active = TRUE
+//         AND end_time > NOW()
+//         ORDER BY start_time DESC
+//         LIMIT 1
+//       `;
+
+//   db.query(sql, (err, results) => {
+//     if (err) {
+//       console.error(err);
+//       return res.status(500).json({ message: "DB error" });
+//     }
+
+//     if (results.length === 0) {
+//       return res.json({ active: false });
+//     }
+
+//     res.json({
+//       active: true,
+//       session: results[0],
+//     });
+//   });
+// });
+
+//fetch active qr sessions
 app.get("/api/voting-sessions/active", authenticate, (req, res) => {
   const { role } = req.user;
 
@@ -1245,28 +1369,54 @@ app.get("/api/voting-sessions/active", authenticate, (req, res) => {
     return res.status(403).json({ message: "Unauthorized" });
   }
 
-  const sql = `SELECT *,
-        TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
-        FROM voting_sessions
-        WHERE is_active = TRUE
-        AND end_time > NOW()
-        ORDER BY start_time DESC
-        LIMIT 1
-      `;
+  const activeSql = `
+    SELECT *,
+      TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+    FROM voting_sessions
+    WHERE is_active = TRUE
+      AND end_time > NOW()
+    ORDER BY start_time DESC
+    LIMIT 1
+  `;
 
-  db.query(sql, (err, results) => {
+  db.query(activeSql, (err, activeResults) => {
     if (err) {
       console.error(err);
       return res.status(500).json({ message: "DB error" });
     }
 
-    if (results.length === 0) {
-      return res.json({ active: false });
+    if (activeResults.length > 0) {
+      // There is a live session
+      return res.json({
+        active: true,
+        session: activeResults[0],
+      });
     }
 
-    res.json({
-      active: true,
-      session: results[0],
+    // No active session — fetch the most recent completed one
+    const lastSql = `
+      SELECT *,
+        0 AS remaining_seconds
+      FROM voting_sessions
+      ORDER BY start_time DESC
+      LIMIT 1
+    `;
+
+    db.query(lastSql, (err2, lastResults) => {
+      if (err2) {
+        console.error(err2);
+        return res.status(500).json({ message: "DB error" });
+      }
+
+      if (lastResults.length === 0) {
+        // No sessions have ever been run
+        return res.json({ active: false, lastSession: null });
+      }
+
+      return res.json({
+        active: false,
+        lastSession: lastResults[0],
+      });
     });
   });
 });
@@ -2199,6 +2349,96 @@ app.get("/api/principal/classes", authenticate, (req, res) => {
     }
 
     res.json(results);
+  });
+});
+
+// GET live rankings for a specific session by ID — used by live rankings tab
+app.get("/api/sessions/:id/rankings", authenticate, (req, res) => {
+  const { id } = req.params;
+
+  const sessionSql = `
+    SELECT *,
+      TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
+    FROM voting_sessions
+    WHERE id = ?
+    LIMIT 1
+  `;
+
+  db.query(sessionSql, [id], (err, sessions) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    if (sessions.length === 0) {
+      return res.status(404).json({ message: "Session not found" });
+    }
+
+    const session = sessions[0];
+
+    const snapshot =
+      typeof session.ts_snap === "string"
+        ? JSON.parse(session.ts_snap)
+        : session.ts_snap;
+
+    const snapshotMap = {};
+    snapshot.forEach((item) => {
+      snapshotMap[item.linking_id] = item;
+    });
+
+    const voteSql = `SELECT rankings FROM voting_results WHERE session_id = ?`;
+
+    db.query(voteSql, [id], (err2, votes) => {
+      if (err2) {
+        console.error(err2);
+        return res.status(500).json({ message: "DB error" });
+      }
+
+      if (!votes || votes.length === 0) {
+        return res.json({
+          rankings: [],
+          totalVotes: 0,
+          remaining_seconds: session.remaining_seconds,
+        });
+      }
+
+      const { S, V } = compBordaScores(votes);
+      const W = compWeightedBorda(S, V);
+
+      const sortedTeachers = Object.entries(W)
+        .map(([linkingId, score]) => ({
+          linkingId: Number(linkingId),
+          score,
+        }))
+        .sort((a, b) => b.score - a.score);
+
+      let prevScore = null;
+      let prevRank = 0;
+
+      const finalRanking = sortedTeachers.map((teacher, index) => {
+        let rank;
+        if (teacher.score === prevScore) {
+          rank = prevRank;
+        } else {
+          rank = index + 1;
+          prevRank = rank;
+          prevScore = teacher.score;
+        }
+        const snap = snapshotMap[teacher.linkingId];
+        return {
+          rank,
+          teacher: snap?.teacher || "Unknown",
+          subject: snap?.subject || "Unknown",
+          score: Number(teacher.score.toFixed(2)),
+        };
+      });
+
+      res.json({
+        rankings: finalRanking,
+        totalVotes: votes.length,
+        remaining_seconds: session.remaining_seconds,
+      });
+    });
   });
 });
 
