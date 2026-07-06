@@ -6,6 +6,8 @@ export default function TeacherManager() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [formData, setFormData] = useState({ name: "" });
+  const [selectMode, setSelectMode] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
 
   useEffect(() => {
     fetchProffs();
@@ -20,6 +22,61 @@ export default function TeacherManager() {
     });
     const data = await res.json();
     setProffs(data);
+  };
+
+  const toggleSelectMode = () => {
+    setSelectMode((prev) => !prev);
+    setSelectedIds([]);
+  };
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+    );
+  };
+
+  const toggleSelectAll = () => {
+    if (selectedIds.length === teachers.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(teachers.map((t) => t.id));
+    }
+  };
+
+  const handleBatchDelete = async () => {
+    if (selectedIds.length === 0) return;
+
+    if (
+      !window.confirm(
+        `Delete ${selectedIds.length} selected professor(s)? This will also remove any subject assignments linked to them.`,
+      )
+    )
+      return;
+
+    const token = localStorage.getItem("token");
+
+    try {
+      const res = await fetch("/api/proffs/batch-delete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(data.message || "Batch delete failed");
+        return;
+      }
+
+      setSelectedIds([]);
+      await fetchProffs();
+    } catch (err) {
+      console.error("Batch delete failed:", err);
+      alert("Server error during batch delete");
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -67,7 +124,12 @@ export default function TeacherManager() {
   };
 
   const handleDelete = async (id, name) => {
-    if (!confirm(`Remove ${name}?`)) return;
+    if (
+      !window.confirm(
+        `Delete ${name}? This will also remove any subject assignments linked to them.`,
+      )
+    )
+      return;
 
     const token = localStorage.getItem("token");
 
@@ -79,17 +141,11 @@ export default function TeacherManager() {
     const data = await res.json();
 
     if (!res.ok) {
-      if (data.classrooms) {
-        alert(
-          `Cannot delete ${name}\n\nAssigned to:\n` +
-            data.classrooms.join("\n"),
-        );
-      } else {
-        alert(data.message || "Delete failed");
-      }
+      alert(data.message || "Delete failed");
       return;
     }
 
+    setSelectedIds((prev) => prev.filter((i) => i !== id));
     await fetchProffs();
   };
 
@@ -99,11 +155,43 @@ export default function TeacherManager() {
         <h2 className="text-lg font-bold uppercase tracking-wide">
           Manage Teachers
         </h2>
-        <Button onClick={() => openModal()}>+ Add Teacher</Button>
+        <div className="flex gap-2">
+          {selectMode && selectedIds.length > 0 && (
+            <Button
+              variant="danger"
+              onClick={handleBatchDelete}
+              className="text-xs px-3 py-2"
+            >
+              Delete Selected ({selectedIds.length})
+            </Button>
+          )}
+          <Button onClick={toggleSelectMode} className="text-xs px-3 py-2">
+            {selectMode ? "Cancel" : "Select"}
+          </Button>
+          <Button onClick={() => openModal()}>+ Add Teacher</Button>
+        </div>
       </div>
 
       <Table
-        headers={["ID", "Name", "Actions"]}
+        headers={
+          selectMode
+            ? [
+                "ID",
+                "Name",
+                "Actions",
+                <span className="flex items-center gap-2 justify-start whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    className="w-5 h-5 cursor-pointer shrink-0"
+                    style={{ border: "2px solid black" }}
+                    checked={teachers.length > 0 && selectedIds.length === teachers.length}
+                    onChange={toggleSelectAll}
+                  />
+                  Select All
+                </span>,
+              ]
+            : ["ID", "Name", "Actions"]
+        }
         data={teachers}
         renderRow={(t) => (
           <tr key={t.id} className="hover:bg-gray-50">
@@ -127,6 +215,19 @@ export default function TeacherManager() {
                 Remove
               </Button>
             </td>
+            {selectMode && (
+              <td className="p-3">
+                <div className="flex items-center justify-start pl-1">
+                  <input
+                    type="checkbox"
+                    className="w-5 h-5 cursor-pointer shrink-0"
+                    style={{ border: "2px solid black" }}
+                    checked={selectedIds.includes(t.id)}
+                    onChange={() => toggleSelect(t.id)}
+                  />
+                </div>
+              </td>
+            )}
           </tr>
         )}
       />

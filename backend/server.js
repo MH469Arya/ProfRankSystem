@@ -582,7 +582,7 @@ app.put("/api/subjects/:id", authenticate, (req, res) => {
   });
 });
 
-//delete sub
+//delete sub (cascade auto-removes linked class_linkings)
 app.delete("/api/subjects/:id", authenticate, (req, res) => {
   const { role, dept } = req.user;
   const { id } = req.params;
@@ -591,34 +591,48 @@ app.delete("/api/subjects/:id", authenticate, (req, res) => {
     return res.status(403).json({ message: "Unauthorized" });
   }
 
-  const checkSql = `
-    SELECT c.year, c.division
-    FROM class_linkings cl
-    JOIN classes c ON cl.class_id = c.id
-    JOIN depts d ON c.dept_id = d.id
-    WHERE cl.sub_id = ? AND d.code = ?
+  const deleteSql = `
+    DELETE s FROM subs s
+    JOIN depts d ON s.dept_id = d.id
+    WHERE s.id = ? AND d.code = ?
   `;
 
-  db.query(checkSql, [id, dept], (err, rows) => {
+  db.query(deleteSql, [id, dept], (err, result) => {
     if (err) return res.status(500).json({ message: "DB error" });
 
-    if (rows.length > 0) {
-      return res.status(409).json({
-        message: "Subject is assigned to classrooms",
-        classrooms: rows.map((r) => `${r.year} ${r.division}`),
-      });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Not found or unauthorized" });
     }
 
-    const deleteSql = `
-      DELETE s FROM subs s
-      JOIN depts d ON s.dept_id = d.id
-      WHERE s.id = ? AND d.code = ?
-    `;
+    res.json({ message: "Subject deleted" });
+  });
+});
 
-    db.query(deleteSql, [id, dept], (err2) => {
-      if (err2) return res.status(500).json({ message: "DB error" });
-      res.json({ message: "Subject deleted" });
-    });
+// BATCH DELETE subjects
+app.post("/api/subjects/batch-delete", authenticate, (req, res) => {
+  const { role, dept } = req.user;
+  const { ids } = req.body;
+
+  if (role !== "DEPT_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ message: "No subjects selected" });
+  }
+
+  const sql = `
+    DELETE s FROM subs s
+    JOIN depts d ON s.dept_id = d.id
+    WHERE s.id IN (?) AND d.code = ?
+  `;
+
+  db.query(sql, [ids, dept], (err, result) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+    res.json({ message: "Subjects deleted", deletedCount: result.affectedRows });
   });
 });
 
@@ -726,7 +740,7 @@ app.put("/api/proffs/:id", authenticate, (req, res) => {
   });
 });
 
-// DELETE proff
+/// DELETE proff (cascade auto-removes linked class_linkings)
 app.delete("/api/proffs/:id", authenticate, (req, res) => {
   const { role, dept } = req.user;
   const { id } = req.params;
@@ -735,37 +749,48 @@ app.delete("/api/proffs/:id", authenticate, (req, res) => {
     return res.status(403).json({ message: "Unauthorized" });
   }
 
-  // Check if proff in use
-  const checkSql = `
-    SELECT c.year, c.division
-    FROM class_linkings cl
-    JOIN classes c ON cl.class_id = c.id
-    JOIN depts d ON c.dept_id = d.id
-    WHERE cl.proff_id = ? AND d.code = ?
+  const deleteSql = `
+    DELETE p FROM proffs p
+    JOIN depts d ON p.dept_id = d.id
+    WHERE p.id = ? AND d.code = ?
   `;
 
-  db.query(checkSql, [id, dept], (err, rows) => {
+  db.query(deleteSql, [id, dept], (err, result) => {
     if (err) return res.status(500).json({ message: "DB error" });
 
-    // proff in use
-    if (rows.length > 0) {
-      return res.status(409).json({
-        message: "Professor is assigned to classrooms",
-        classrooms: rows.map((r) => `${r.year} ${r.division}`),
-      });
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "Not found or unauthorized" });
     }
 
-    // delete if not in use
-    const deleteSql = `
-      DELETE p FROM proffs p
-      JOIN depts d ON p.dept_id = d.id
-      WHERE p.id = ? AND d.code = ?
-    `;
+    res.json({ message: "Professor deleted" });
+  });
+});
 
-    db.query(deleteSql, [id, dept], (err2, result) => {
-      if (err2) return res.status(500).json({ message: "DB error" });
-      res.json({ message: "Professor deleted" });
-    });
+// BATCH DELETE proffs
+app.post("/api/proffs/batch-delete", authenticate, (req, res) => {
+  const { role, dept } = req.user;
+  const { ids } = req.body;
+
+  if (role !== "DEPT_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ message: "No professors selected" });
+  }
+
+  const sql = `
+    DELETE p FROM proffs p
+    JOIN depts d ON p.dept_id = d.id
+    WHERE p.id IN (?) AND d.code = ?
+  `;
+
+  db.query(sql, [ids, dept], (err, result) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+    res.json({ message: "Professors deleted", deletedCount: result.affectedRows });
   });
 });
 
@@ -1328,40 +1353,6 @@ app.post("/api/vote", async (req, res) => {
 });
 
 //fetch active qr sessions
-// app.get("/api/voting-sessions/active", authenticate, (req, res) => {
-//   const { role } = req.user;
-
-//   if (role !== "SUPER_ADMIN") {
-//     return res.status(403).json({ message: "Unauthorized" });
-//   }
-
-//   const sql = `SELECT *,
-//         TIMESTAMPDIFF(SECOND, NOW(), end_time) AS remaining_seconds
-//         FROM voting_sessions
-//         WHERE is_active = TRUE
-//         AND end_time > NOW()
-//         ORDER BY start_time DESC
-//         LIMIT 1
-//       `;
-
-//   db.query(sql, (err, results) => {
-//     if (err) {
-//       console.error(err);
-//       return res.status(500).json({ message: "DB error" });
-//     }
-
-//     if (results.length === 0) {
-//       return res.json({ active: false });
-//     }
-
-//     res.json({
-//       active: true,
-//       session: results[0],
-//     });
-//   });
-// });
-
-//fetch active qr sessions
 app.get("/api/voting-sessions/active", authenticate, (req, res) => {
   const { role } = req.user;
 
@@ -1634,6 +1625,126 @@ app.get("/api/results", (req, res) => {
       },
     );
   });
+});
+
+// CLEAR ALL RANKING DATA (deletes sessions -> cascades votes + tokens)
+app.post("/api/rankings/clear-all", authenticate, (req, res) => {
+  try {
+    const { role } = req.user;
+
+    if (role !== "SUPER_ADMIN") {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    db.query("DELETE FROM voting_sessions", (err, result) => {
+      try {
+        if (err) {
+          console.error(err);
+          return res.status(500).json({ message: "DB error" });
+        }
+
+        res.json({
+          message: "All ranking data cleared",
+          deletedSessions: result.affectedRows,
+        });
+      } catch (innerErr) {
+        console.error("clear-all inner error:", innerErr);
+        if (!res.headersSent) res.status(500).json({ message: "Server error" });
+      }
+    });
+  } catch (outerErr) {
+    console.error("clear-all outer error:", outerErr);
+    if (!res.headersSent) res.status(500).json({ message: "Server error" });
+  }
+});
+
+// CHECK IF ANY RANKING DATA EXISTS (used to enable/disable "Clear All")
+app.get("/api/rankings/has-data", authenticate, (req, res) => {
+  const { role } = req.user;
+
+  if (role !== "SUPER_ADMIN") {
+    return res.status(403).json({ message: "Unauthorized" });
+  }
+
+  db.query("SELECT id FROM voting_results LIMIT 1", (err, rows) => {
+    if (err) {
+      console.error(err);
+      return res.status(500).json({ message: "DB error" });
+    }
+
+    res.json({ hasData: rows.length > 0 });
+  });
+});
+
+// DELETE ONLY FILTERED RANKING DATA (matching sessions -> cascades votes + tokens)
+app.post("/api/rankings/delete-filtered", authenticate, (req, res) => {
+  try {
+    const { role } = req.user;
+    const { department, year, division, academic_year } = req.body;
+
+    if (role !== "SUPER_ADMIN") {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    if (!department || !year || !division || !academic_year) {
+      return res.status(400).json({ message: "Missing filters" });
+    }
+
+    const fullDivision = `${department}-${year}-${division}`.toUpperCase();
+
+    const findSql = `
+      SELECT DISTINCT vs.id
+      FROM voting_sessions vs
+      JOIN voting_results vr ON vr.session_id = vs.id
+      WHERE UPPER(vs.division) = UPPER(?)
+      AND (
+        CASE
+          WHEN MONTH(vr.submitted_at) >= 7
+            THEN CONCAT(YEAR(vr.submitted_at), '-', RIGHT(YEAR(vr.submitted_at)+1,2))
+          ELSE
+            CONCAT(YEAR(vr.submitted_at)-1, '-', RIGHT(YEAR(vr.submitted_at),2))
+        END
+      ) = ?
+    `;
+
+    db.query(findSql, [fullDivision, academic_year], (err, rows) => {
+      try {
+        if (err) {
+          console.error(err);
+          return res.status(500).json({ message: "DB error" });
+        }
+
+        if (rows.length === 0) {
+          return res.json({ message: "No matching ranking data found", deletedSessions: 0 });
+        }
+
+        const sessionIds = rows.map((r) => r.id);
+
+        db.query("DELETE FROM voting_sessions WHERE id IN (?)", [sessionIds], (err2, result) => {
+          try {
+            if (err2) {
+              console.error(err2);
+              return res.status(500).json({ message: "DB error" });
+            }
+
+            res.json({
+              message: "Filtered ranking data deleted",
+              deletedSessions: result.affectedRows,
+            });
+          } catch (innerErr) {
+            console.error("delete-filtered inner error:", innerErr);
+            if (!res.headersSent) res.status(500).json({ message: "Server error" });
+          }
+        });
+      } catch (innerErr) {
+        console.error("delete-filtered find error:", innerErr);
+        if (!res.headersSent) res.status(500).json({ message: "Server error" });
+      }
+    });
+  } catch (outerErr) {
+    console.error("delete-filtered outer error:", outerErr);
+    if (!res.headersSent) res.status(500).json({ message: "Server error" });
+  }
 });
 
 //draw table func

@@ -9,6 +9,7 @@ export default function RankingView() {
   const [selectedDiv, setSelectedDiv] = useState("");
   const [rankings, setRankings] = useState([]);
   const [totalVotes, setTotalVotes] = useState(0);
+  const [hasAnyRankingData, setHasAnyRankingData] = useState(false);
   const [isDownloadModalOpen, setIsDownloadModalOpen] = useState(false);
   const [professorName, setProfessorName] = useState("");
   const [departments, setDepartments] = useState([]);
@@ -125,6 +126,93 @@ export default function RankingView() {
       setTotalVotes(data.totalVotes || 0);
     } catch (error) {
       console.error("Error fetching rankings:", error);
+    }
+  };
+
+  const handleClearAllRankings = async () => {
+    if (
+      !window.confirm(
+        "This will permanently delete ALL ranking data and voting sessions across every department, class, and year. This cannot be undone. Continue?",
+      )
+    )
+      return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/rankings/clear-all", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+
+      if (!res.ok) {
+        alert(data.message || "Failed to clear rankings");
+        return;
+      }
+
+      alert("All ranking data cleared.");
+      setSelectedAcademicYear("");
+      fetchAcademicYears();
+      fetchRankings();
+      fetchHasAnyRankingData();
+    } catch (error) {
+      console.error("Error clearing rankings:", error);
+      alert("Server error");
+    }
+  };
+
+  const handleDeleteFilteredRankings = async () => {
+    if (!canDownloadReport) return;
+
+    if (
+      !window.confirm(
+        `Delete all ranking data for ${selectedDept} ${selectedYear}-${selectedDiv} (${selectedAcademicYear})? This cannot be undone.`,
+      )
+    )
+      return;
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/rankings/delete-filtered", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          department: selectedDept,
+          year: selectedYear,
+          division: selectedDiv,
+          academic_year: selectedAcademicYear,
+        }),
+      });
+
+      let data = {};
+      try {
+        data = await res.json();
+      } catch {
+        data = {};
+      }
+
+      if (!res.ok) {
+        alert(data.message || "Failed to delete rankings");
+        return;
+      }
+
+      alert("Filtered ranking data deleted.");
+      setSelectedAcademicYear("");
+      fetchAcademicYears();
+      fetchRankings();
+      fetchHasAnyRankingData();
+    } catch (error) {
+      console.error("Error deleting filtered rankings:", error);
+      alert("Server error");
     }
   };
 
@@ -271,6 +359,24 @@ export default function RankingView() {
     setProfessors(data);
   };
 
+  const fetchHasAnyRankingData = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/rankings/has-data", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      setHasAnyRankingData(!!data.hasData);
+    } catch (error) {
+      console.error("Error checking ranking data:", error);
+    }
+  };
+
+  useEffect(() => {
+    fetchProfessorNames();
+    fetchHasAnyRankingData();
+  }, []);
+
   const canDownloadReport =
     selectedDept &&
     selectedYear &&
@@ -403,17 +509,35 @@ export default function RankingView() {
             <h2 className="text-lg font-bold uppercase tracking-wide">
               Ranking Results
             </h2>
-            <Button
-              variant="primary"
-              onClick={() => {
-                if (!canDownloadReport) return;
-                setIsDownloadModalOpen(true);
-              }}
-              className="text-xs disabled:opacity-50 disabled:cursor-not-allowed"
-              disabled={!canDownloadReport}
-            >
-              Download Report
-            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                onClick={handleDeleteFilteredRankings}
+                className="text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!canDownloadReport}
+              >
+                Delete Filtered Data
+              </Button>
+              <Button
+                variant="primary"
+                onClick={handleClearAllRankings}
+                className="text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!hasAnyRankingData}
+              >
+                Clear All Rankings
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (!canDownloadReport) return;
+                  setIsDownloadModalOpen(true);
+                }}
+                className="text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={!canDownloadReport}
+              >
+                Download Report
+              </Button>
+            </div>
           </div>
 
           <Modal
