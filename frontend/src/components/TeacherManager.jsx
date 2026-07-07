@@ -179,16 +179,16 @@ export default function TeacherManager() {
                 "ID",
                 "Name",
                 "Actions",
-                <span className="flex items-center gap-2 justify-start whitespace-nowrap">
+                <div className="flex items-center justify-center gap-1.5" title="Select All">
                   <input
                     type="checkbox"
-                    className="w-5 h-5 cursor-pointer shrink-0"
+                    className="w-4 h-4 cursor-pointer shrink-0"
                     style={{ border: "2px solid black" }}
                     checked={teachers.length > 0 && selectedIds.length === teachers.length}
                     onChange={toggleSelectAll}
                   />
-                  Select All
-                </span>,
+                  <span className="text-xs font-bold uppercase tracking-tight whitespace-nowrap">SELECT ALL</span>
+                </div>,
               ]
             : ["ID", "Name", "Actions"]
         }
@@ -216,11 +216,11 @@ export default function TeacherManager() {
               </Button>
             </td>
             {selectMode && (
-              <td className="p-3">
-                <div className="flex items-center justify-start pl-1">
+              <td className="p-3 w-28 text-center">
+                <div className="flex items-center justify-center">
                   <input
                     type="checkbox"
-                    className="w-5 h-5 cursor-pointer shrink-0"
+                    className="w-4 h-4 cursor-pointer shrink-0"
                     style={{ border: "2px solid black" }}
                     checked={selectedIds.includes(t.id)}
                     onChange={() => toggleSelect(t.id)}
