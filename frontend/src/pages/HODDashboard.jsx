@@ -3,6 +3,7 @@ import { useAuth } from "../contexts/AuthContext";
 import DivisionManager from "../components/DivisionManager";
 import TeacherManager from "../components/TeacherManager";
 import SubjectManager from "../components/SubjectManager";
+import BulkUpload from "../components/BulkUpload";
 import ChangePasswordModal from "../components/ChangePasswordModal";
 
 export default function HODDashboard() {
@@ -18,6 +19,8 @@ export default function HODDashboard() {
         return <TeacherManager />;
       case "subjects":
         return <SubjectManager />;
+      case "bulk":
+        return <BulkUpload />;
       default:
         return <DivisionManager />;
     }
@@ -64,6 +67,7 @@ export default function HODDashboard() {
           <TabButton id="divisions" label="Classrooms" />
           <TabButton id="teachers" label="Professors" />
           <TabButton id="subjects" label="Subjects" />
+          <TabButton id="bulk" label="Bulk Upload" />
         </div>
       </div>
 

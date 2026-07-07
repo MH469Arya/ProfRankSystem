@@ -10,6 +10,9 @@ const crypto = require("crypto");
 const PDFDocument = require("pdfkit");
 const fs = require("fs");
 const nodemailer = require("nodemailer");
+const util = require("util");
+const multer = require("multer");
+const ExcelJS = require("exceljs");
 
 const app = express();
 app.use((req, res, next) => {
@@ -38,6 +41,13 @@ const db = mysql.createConnection({
   database: process.env.DB_NAME,
 });
 
+const dbQuery = util.promisify(db.query).bind(db);
+const dbBeginTransaction = util.promisify(db.beginTransaction).bind(db);
+const dbCommit = util.promisify(db.commit).bind(db);
+const dbRollback = util.promisify(db.rollback).bind(db);
+
+const upload = multer({ storage: multer.memoryStorage() });
+
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
@@ -57,6 +67,300 @@ transporter.verify((err, success) => {
 //funcs
 function generatePassword() {
   return crypto.randomBytes(2).toString("hex");
+}
+
+// ---------- Bulk upload helpers ----------
+
+const MARKER_SET = new Set(["DEPT", "END_DEPT", "DIV", "END_DIV"]);
+function readMarker(row, i) {
+  const raw = String(row[0] || "").trim();
+  if (!raw) return { marker: null, raw };
+
+  if (MARKER_SET.has(raw)) return { marker: raw, raw };
+
+  const normalized = raw.toUpperCase().replace(/[\s_-]/g, "");
+  const looksLikeMarkerAttempt = /^(END)?(DEPT|DIV)$/.test(normalized);
+
+  if (looksLikeMarkerAttempt) {
+    throw new Error(
+      `Row ${i + 1}: "${raw}" looks like a marker but isn't written exactly right. ` +
+        `Use exactly DEPT, END_DEPT, DIV, or END_DIV (case-sensitive, underscore not space/dash).`,
+    );
+  }
+
+  return { marker: null, raw };
+}
+
+const VALID_YEARS = ["FE", "SE", "TE", "BE"];
+
+// Outside a block, only column A (where a marker would be) matters.
+function isBlankOutsideBlock(row) {
+  return !String(row[0] || "").trim();
+}
+
+// For a professor/subject entry row, only columns A and B matter —
+// stray content in other columns should never cause a false positive.
+function isBlankEntryRow(row) {
+  const professor = String(row[0] || "").trim();
+  const subject = String(row[1] || "").trim();
+  return !professor && !subject;
+}
+
+function validateDivHeader(row, i, context) {
+  const year = String(row[1] || "")
+    .trim()
+    .toUpperCase();
+  const division = String(row[2] || "")
+    .trim()
+    .toUpperCase();
+
+  if (!VALID_YEARS.includes(year)) {
+    throw new Error(
+      `Row ${i + 1}: Invalid year "${row[1]}" ${context}. Must be one of FE, SE, TE, BE.`,
+    );
+  }
+  if (!/^[A-Z]$/.test(division)) {
+    throw new Error(
+      `Row ${i + 1}: Invalid division "${row[2]}" ${context}. Must be a single letter (e.g. A).`,
+    );
+  }
+
+  return { year, division };
+}
+
+function parseHodSheet(rows) {
+  const divisions = [];
+  const seenDivisions = new Set();
+  let current = null;
+
+  rows.forEach((row, i) => {
+    const { marker } = readMarker(row, i);
+
+    if (marker === "DEPT" || marker === "END_DEPT") {
+      throw new Error(
+        `Row ${i + 1}: You can only upload data for your own department — remove DEPT/END_DEPT markers from this file.`,
+      );
+    }
+
+    if (marker === "DIV") {
+      if (current)
+        throw new Error(`Row ${i + 1}: Missing END_DIV before new DIV`);
+
+      const { year, division } = validateDivHeader(row, i, "in DIV header");
+      const key = `${year}-${division}`;
+      if (seenDivisions.has(key)) {
+        throw new Error(
+          `Row ${i + 1}: Division ${key} appears more than once in this file`,
+        );
+      }
+      seenDivisions.add(key);
+
+      current = { year, division, entries: [] };
+      return;
+    }
+
+    if (marker === "END_DIV") {
+      if (!current)
+        throw new Error(`Row ${i + 1}: END_DIV without a matching DIV`);
+      divisions.push(current);
+      current = null;
+      return;
+    }
+
+    if (!current) {
+      if (isBlankOutsideBlock(row)) return;
+      throw new Error(
+        `Row ${i + 1}: Unexpected content outside of a DIV block. Expected a DIV marker.`,
+      );
+    }
+
+    if (isBlankEntryRow(row)) return;
+
+    const professor = String(row[0] || "").trim();
+    const subject = String(row[1] || "").trim();
+
+    if (!professor || !subject) {
+      throw new Error(
+        `Row ${i + 1}: Both Professor and Subject must be filled in`,
+      );
+    }
+
+    current.entries.push({ professor, subject });
+  });
+
+  if (current) throw new Error("Missing END_DIV at end of file");
+  if (divisions.length === 0) throw new Error("No DIV blocks found in file");
+
+  return divisions;
+}
+
+function parseAdminSheet(rows) {
+  const depts = [];
+  const seenDepts = new Set();
+  let currentDept = null;
+  let currentDiv = null;
+  let seenDivisions = null;
+
+  rows.forEach((row, i) => {
+    const { marker } = readMarker(row, i);
+
+    if (marker === "DEPT") {
+      if (currentDept)
+        throw new Error(`Row ${i + 1}: Missing END_DEPT before new DEPT`);
+
+      const deptCode = String(row[1] || "")
+        .trim()
+        .toUpperCase();
+      if (!deptCode) {
+        throw new Error(
+          `Row ${i + 1}: DEPT marker is missing a department code`,
+        );
+      }
+      if (seenDepts.has(deptCode)) {
+        throw new Error(
+          `Row ${i + 1}: Department ${deptCode} appears more than once in this file`,
+        );
+      }
+      seenDepts.add(deptCode);
+
+      currentDept = { deptCode, divisions: [] };
+      seenDivisions = new Set();
+      return;
+    }
+
+    if (marker === "END_DEPT") {
+      if (!currentDept)
+        throw new Error(`Row ${i + 1}: END_DEPT without a matching DEPT`);
+      if (currentDiv)
+        throw new Error(`Row ${i + 1}: Missing END_DIV before END_DEPT`);
+      depts.push(currentDept);
+      currentDept = null;
+      seenDivisions = null;
+      return;
+    }
+
+    if (!currentDept) {
+      if (isBlankOutsideBlock(row)) return;
+      throw new Error(
+        `Row ${i + 1}: Unexpected content outside of a DEPT block. Expected a DEPT marker.`,
+      );
+    }
+
+    if (marker === "DIV") {
+      if (currentDiv)
+        throw new Error(`Row ${i + 1}: Missing END_DIV before new DIV`);
+
+      const { year, division } = validateDivHeader(
+        row,
+        i,
+        `in DEPT ${currentDept.deptCode}`,
+      );
+      const key = `${year}-${division}`;
+      if (seenDivisions.has(key)) {
+        throw new Error(
+          `Row ${i + 1}: Division ${key} appears more than once in DEPT ${currentDept.deptCode}`,
+        );
+      }
+      seenDivisions.add(key);
+
+      currentDiv = { year, division, entries: [] };
+      return;
+    }
+
+    if (marker === "END_DIV") {
+      if (!currentDiv)
+        throw new Error(`Row ${i + 1}: END_DIV without a matching DIV`);
+      currentDept.divisions.push(currentDiv);
+      currentDiv = null;
+      return;
+    }
+
+    if (!currentDiv) {
+      if (isBlankOutsideBlock(row)) return;
+      throw new Error(
+        `Row ${i + 1}: Unexpected content outside of a DIV block. Expected a DIV marker.`,
+      );
+    }
+
+    if (isBlankEntryRow(row)) return;
+
+    const professor = String(row[0] || "").trim();
+    const subject = String(row[1] || "").trim();
+
+    if (!professor || !subject) {
+      throw new Error(
+        `Row ${i + 1}: Both Professor and Subject must be filled in`,
+      );
+    }
+
+    currentDiv.entries.push({ professor, subject });
+  });
+
+  if (currentDept) throw new Error("Missing END_DEPT at end of file");
+  if (depts.length === 0) throw new Error("No DEPT blocks found in file");
+
+  return depts;
+}
+
+async function resolveDept(deptCode, role, createdAccounts) {
+  const code = deptCode.trim().toUpperCase();
+
+  const rows = await dbQuery("SELECT id FROM depts WHERE UPPER(code) = ?", [
+    code,
+  ]);
+  if (rows.length > 0) return rows[0].id;
+
+  if (role !== "SUPER_ADMIN") {
+    throw new Error(`Department ${code} does not exist`);
+  }
+
+  const insertResult = await dbQuery("INSERT INTO depts (code) VALUES (?)", [
+    code,
+  ]);
+  const deptId = insertResult.insertId;
+
+  const username = `${code.toLowerCase()}_hod`;
+  const tempPassword = generatePassword();
+  const hash = await bcrypt.hash(tempPassword, 10);
+
+  await dbQuery(
+    "INSERT INTO users (username, password_hash, role, dept_id) VALUES (?, ?, 'DEPT_ADMIN', ?)",
+    [username, hash, deptId],
+  );
+
+  createdAccounts.push({ dept: code, username, tempPassword });
+  return deptId;
+}
+
+async function resolveClass(deptId, year, division) {
+  const rows = await dbQuery(
+    "SELECT id FROM classes WHERE dept_id = ? AND year = ? AND division = ?",
+    [deptId, year, division],
+  );
+  if (rows.length > 0) return rows[0].id;
+
+  const result = await dbQuery(
+    "INSERT INTO classes (dept_id, year, division) VALUES (?, ?, ?)",
+    [deptId, year, division],
+  );
+  return result.insertId;
+}
+
+// table must only ever be "proffs" or "subs" — both hardcoded by callers below, never user input.
+async function resolveNamedEntity(table, deptId, rawName) {
+  const name = rawName.trim();
+
+  const rows = await dbQuery(
+    `SELECT id FROM ${table} WHERE dept_id = ? AND LOWER(TRIM(name)) = LOWER(?)`,
+    [deptId, name],
+  );
+  if (rows.length > 0) return rows[0].id;
+
+  const result = await dbQuery(
+    `INSERT INTO ${table} (dept_id, name) VALUES (?, ?)`,
+    [deptId, name],
+  );
+  return result.insertId;
 }
 
 function compBordaScores(votes) {
@@ -480,17 +784,23 @@ app.post("/api/reset-password-otp", async (req, res) => {
   const { otp, newPassword } = req.body;
 
   if (!otp || !newPassword) {
-    return res.status(400).json({ message: "OTP and new password are required" });
+    return res
+      .status(400)
+      .json({ message: "OTP and new password are required" });
   }
 
   if (!principalOtpStore.otp) {
-    return res.status(400).json({ message: "No OTP was requested. Please request a new one." });
+    return res
+      .status(400)
+      .json({ message: "No OTP was requested. Please request a new one." });
   }
 
   if (Date.now() > principalOtpStore.expiresAt) {
     principalOtpStore.otp = null;
     principalOtpStore.expiresAt = null;
-    return res.status(400).json({ message: "OTP has expired. Please request a new one." });
+    return res
+      .status(400)
+      .json({ message: "OTP has expired. Please request a new one." });
   }
 
   if (otp.trim() !== principalOtpStore.otp) {
@@ -498,7 +808,9 @@ app.post("/api/reset-password-otp", async (req, res) => {
   }
 
   if (newPassword.length < 4) {
-    return res.status(400).json({ message: "Password must be at least 4 characters" });
+    return res
+      .status(400)
+      .json({ message: "Password must be at least 4 characters" });
   }
 
   try {
@@ -510,7 +822,9 @@ app.post("/api/reset-password-otp", async (req, res) => {
       (err) => {
         if (err) {
           console.error(err);
-          return res.status(500).json({ message: "DB error while updating password" });
+          return res
+            .status(500)
+            .json({ message: "DB error while updating password" });
         }
 
         // Clear OTP after successful reset
@@ -518,7 +832,7 @@ app.post("/api/reset-password-otp", async (req, res) => {
         principalOtpStore.expiresAt = null;
 
         res.json({ message: "Password reset successfully" });
-      }
+      },
     );
   } catch (err) {
     console.error(err);
@@ -632,7 +946,10 @@ app.post("/api/subjects/batch-delete", authenticate, (req, res) => {
       console.error(err);
       return res.status(500).json({ message: "DB error" });
     }
-    res.json({ message: "Subjects deleted", deletedCount: result.affectedRows });
+    res.json({
+      message: "Subjects deleted",
+      deletedCount: result.affectedRows,
+    });
   });
 });
 
@@ -790,7 +1107,10 @@ app.post("/api/proffs/batch-delete", authenticate, (req, res) => {
       console.error(err);
       return res.status(500).json({ message: "DB error" });
     }
-    res.json({ message: "Professors deleted", deletedCount: result.affectedRows });
+    res.json({
+      message: "Professors deleted",
+      deletedCount: result.affectedRows,
+    });
   });
 });
 
@@ -1586,7 +1906,7 @@ app.get("/api/results", (req, res) => {
         const { S, V } = compBordaScores(votes);
 
         const W = compWeightedBorda(S, V);
-   
+
         const sortedTeachers = Object.entries(W)
           .map(([linkingId, score]) => ({
             linkingId: Number(linkingId),
@@ -1715,27 +2035,35 @@ app.post("/api/rankings/delete-filtered", authenticate, (req, res) => {
         }
 
         if (rows.length === 0) {
-          return res.json({ message: "No matching ranking data found", deletedSessions: 0 });
+          return res.json({
+            message: "No matching ranking data found",
+            deletedSessions: 0,
+          });
         }
 
         const sessionIds = rows.map((r) => r.id);
 
-        db.query("DELETE FROM voting_sessions WHERE id IN (?)", [sessionIds], (err2, result) => {
-          try {
-            if (err2) {
-              console.error(err2);
-              return res.status(500).json({ message: "DB error" });
-            }
+        db.query(
+          "DELETE FROM voting_sessions WHERE id IN (?)",
+          [sessionIds],
+          (err2, result) => {
+            try {
+              if (err2) {
+                console.error(err2);
+                return res.status(500).json({ message: "DB error" });
+              }
 
-            res.json({
-              message: "Filtered ranking data deleted",
-              deletedSessions: result.affectedRows,
-            });
-          } catch (innerErr) {
-            console.error("delete-filtered inner error:", innerErr);
-            if (!res.headersSent) res.status(500).json({ message: "Server error" });
-          }
-        });
+              res.json({
+                message: "Filtered ranking data deleted",
+                deletedSessions: result.affectedRows,
+              });
+            } catch (innerErr) {
+              console.error("delete-filtered inner error:", innerErr);
+              if (!res.headersSent)
+                res.status(500).json({ message: "Server error" });
+            }
+          },
+        );
       } catch (innerErr) {
         console.error("delete-filtered find error:", innerErr);
         if (!res.headersSent) res.status(500).json({ message: "Server error" });
@@ -2552,6 +2880,113 @@ app.get("/api/sessions/:id/rankings", authenticate, (req, res) => {
     });
   });
 });
+
+// BULK UPLOAD — professors/subjects/linkings from an Excel sheet.
+// DEPT_ADMIN: sheet has DIV blocks only, scoped to their own dept (from JWT).
+// SUPER_ADMIN: sheet has DEPT blocks wrapping DIV blocks, can span multiple depts.
+app.post(
+  "/api/bulk-upload",
+  authenticate,
+  upload.single("file"),
+  async (req, res) => {
+    const { role, dept } = req.user;
+
+    if (role !== "SUPER_ADMIN" && role !== "DEPT_ADMIN") {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    let rows;
+    try {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+      const sheet = workbook.worksheets[0];
+
+      rows = [];
+      sheet.eachRow((row) => {
+        const values = row.values.slice(1); // ExcelJS rows are 1-indexed; drop the leading undefined
+        rows.push(values.map((v) => (v === undefined || v === null ? "" : v)));
+      });
+    } catch (err) {
+      console.error(err);
+      return res.status(400).json({ message: "Invalid Excel file" });
+    }
+
+    let deptBlocks;
+    try {
+      deptBlocks =
+        role === "SUPER_ADMIN"
+          ? parseAdminSheet(rows)
+          : [{ deptCode: dept, divisions: parseHodSheet(rows) }];
+    } catch (err) {
+      return res.status(400).json({ message: err.message });
+    }
+
+    const createdAccounts = [];
+
+    try {
+      await dbBeginTransaction();
+
+      for (const block of deptBlocks) {
+        const deptId = await resolveDept(block.deptCode, role, createdAccounts);
+
+        for (const div of block.divisions) {
+          const seenSubjects = new Set();
+          for (const entry of div.entries) {
+            const key = entry.subject.toLowerCase();
+            if (seenSubjects.has(key)) {
+              throw new Error(
+                `Duplicate subject "${entry.subject}" in ${div.year}-${div.division} (${block.deptCode})`,
+              );
+            }
+            seenSubjects.add(key);
+          }
+
+          const classId = await resolveClass(deptId, div.year, div.division);
+
+          const linkings = [];
+          for (const entry of div.entries) {
+            const proffId = await resolveNamedEntity(
+              "proffs",
+              deptId,
+              entry.professor,
+            );
+            const subId = await resolveNamedEntity(
+              "subs",
+              deptId,
+              entry.subject,
+            );
+            linkings.push([classId, subId, proffId]);
+          }
+
+          await dbQuery("DELETE FROM class_linkings WHERE class_id = ?", [
+            classId,
+          ]);
+
+          if (linkings.length > 0) {
+            await dbQuery(
+              "INSERT INTO class_linkings (class_id, sub_id, proff_id) VALUES ?",
+              [linkings],
+            );
+          }
+        }
+      }
+
+      await dbCommit();
+      res.json({
+        message: "Bulk upload completed successfully",
+        createdAccounts,
+      });
+    } catch (err) {
+      await dbRollback();
+      console.error("Bulk upload failed:", err);
+      res.status(500).json({ message: err.message || "Bulk upload failed" });
+    }
+  },
+);
 
 //auto clean sessions every 30 seconds
 setInterval(() => {

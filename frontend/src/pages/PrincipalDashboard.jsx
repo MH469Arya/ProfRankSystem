@@ -3,6 +3,7 @@ import { useAuth } from "../contexts/AuthContext";
 import DepartmentManager from "../components/DepartmentManager";
 import RankingView from "../components/RankingView";
 import QRGenerator from "../components/QRGenerator";
+import BulkUpload from "../components/BulkUpload";
 import ChangePasswordModal from "../components/ChangePasswordModal";
 
 export default function PrincipalDashboard() {
@@ -18,6 +19,8 @@ export default function PrincipalDashboard() {
         return <RankingView />;
       case "qr":
         return <QRGenerator />;
+      case "bulk":
+        return <BulkUpload />;
       default:
         return <DepartmentManager />;
     }
@@ -64,6 +67,7 @@ export default function PrincipalDashboard() {
           <TabButton id="departments" label="Departments" />
           <TabButton id="rankings" label="View Rankings" />
           <TabButton id="qr" label="QR Generator" />
+          <TabButton id="bulk" label="Bulk Upload" />
         </div>
       </div>
 
